@@ -434,11 +434,11 @@ INSERT INTO payroll_records (staff_id, period_start, period_end, service_revenue
 ('e5555555-5555-5555-5555-555555555555', '2026-02-16', '2026-02-28', 1440, 576, 192, 40, 0, 808, 'pending');
 
 -- Insert Marketing Campaigns
-INSERT INTO campaigns (branch_id, name, type, audience, status, sent_count, opened_count, converted_count, revenue_generated, created_at) VALUES
-('b1111111-1111-1111-1111-111111111111', 'Re-engagement - March', 'sms', 'Inactive 30 days', 'active', 284, 198, 67, 3350, '2026-03-01'),
-('b1111111-1111-1111-1111-111111111111', 'VIP Spring Promo', 'email', 'VIP', 'completed', 128, 112, 44, 5280, '2026-02-20'),
-('b1111111-1111-1111-1111-111111111111', 'New Service Launch', 'sms', 'All Clients', 'draft', 0, 0, 0, 0, '2026-03-10'),
-('b1111111-1111-1111-1111-111111111111', 'Loyalty Points Bonus', 'email', 'Gold+', 'scheduled', 0, 0, 0, 0, '2026-03-05');
+INSERT INTO campaigns (branch_id, name, type, audience, message, status, sent_count, opened_count, converted_count, revenue_generated, created_at) VALUES
+('b1111111-1111-1111-1111-111111111111', 'Re-engagement - March', 'sms', 'Inactive 30 days', 'We miss you! Come back for a fresh cut and get 10% off your next visit.', 'active', 284, 198, 67, 3350, '2026-03-01'),
+('b1111111-1111-1111-1111-111111111111', 'VIP Spring Promo', 'email', 'VIP', 'Exclusive offer for our VIP members: 20% off all styling products this month!', 'completed', 128, 112, 44, 5280, '2026-02-20'),
+('b1111111-1111-1111-1111-111111111111', 'New Service Launch', 'sms', 'All Clients', 'Introducing our new Scalp Treatment! Book now to experience ultimate relaxation.', 'draft', 0, 0, 0, 0, '2026-03-10'),
+('b1111111-1111-1111-1111-111111111111', 'Loyalty Points Bonus', 'email', 'Gold+', 'Valued Gold Member: Earn double points on all services this week only!', 'scheduled', 0, 0, 0, 0, '2026-03-05');
 
 -- ==========================================
 -- FUNCTIONS & TRIGGERS
