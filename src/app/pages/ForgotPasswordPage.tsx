@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scissors, ArrowLeft, ArrowRight, Mail } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuthStore } from '../store/useAuthStore';
 
 export function ForgotPasswordPage() {
   const navigate = useNavigate();
+  const requestPasswordReset = useAuthStore(state => state.requestPasswordReset);
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -12,10 +14,16 @@ export function ForgotPasswordPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1200));
-    setLoading(false);
-    setSent(true);
-    toast.success('Recovery email sent');
+    try {
+      await requestPasswordReset(email);
+      setSent(true);
+      toast.success('Recovery email sent');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to send recovery email';
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

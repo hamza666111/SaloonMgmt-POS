@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Building2, Receipt, Percent, Calendar, CreditCard,
   Palette, Save, ChevronRight, Globe, Clock, Phone,
@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner';
 import { useBranchStore } from '../store/useBranchStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { getSettings, saveSettings } from '../lib/supabaseData';
 
 const tabs = [
   { id: 'business', label: 'Business Info', icon: Building2 },
@@ -29,6 +30,7 @@ export function SettingsPage() {
     accentColor,
     updateAccentColor,
   } = useSettingsStore();
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const [taxSettings, setTaxSettings] = useState({
     taxEnabled: true,
     taxOnServices: true,
@@ -71,6 +73,12 @@ export function SettingsPage() {
   const [newBenefitInputs, setNewBenefitInputs] = useState<Record<string, string>>({
     Bronze: '', Silver: '', Gold: '', Platinum: '',
   });
+  const [paymentProcessors, setPaymentProcessors] = useState([
+    { name: 'Stripe', desc: 'Credit/debit cards, tap to pay', active: true, color: '#6772e5' },
+    { name: 'Square', desc: 'In-person and online payments', active: false, color: '#00d4aa' },
+    { name: 'Cash', desc: 'Manual cash tracking', active: true, color: '#10b981' },
+    { name: 'Gift Cards', desc: 'Branded gift card program', active: true, color: '#f59e0b' },
+  ]);
 
   const tierMeta: Record<string, { color: string; bg: string; border: string; icon: any; label: string }> = {
     Bronze:   { color: '#b45309', bg: 'rgba(180,83,9,0.08)',    border: 'rgba(180,83,9,0.25)',    icon: Star,   label: 'Bronze' },
@@ -95,11 +103,71 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const { branches, addBranch, updateBranch } = useBranchStore();
 
+  useEffect(() => {
+    const loadSavedSettings = async () => {
+      try {
+        const settings = await getSettings(activeBranchId);
+        if (!settings || typeof settings !== 'object') return;
+
+        if (settings.businessInfo) {
+          updateBusinessInfo(settings.businessInfo);
+        }
+
+        if (settings.receiptSettings) {
+          updateReceiptSettings(settings.receiptSettings);
+        }
+
+        if (typeof settings.accentColor === 'string' && settings.accentColor) {
+          updateAccentColor(settings.accentColor);
+        }
+
+        if (settings.taxSettings) {
+          setTaxSettings(settings.taxSettings);
+        }
+
+        if (settings.commissionRules) {
+          setCommissionRules(settings.commissionRules);
+        }
+
+        if (settings.bookingRules) {
+          setBookingRules(settings.bookingRules);
+        }
+
+        if (settings.loyaltyTiers) {
+          setLoyaltyTiers(settings.loyaltyTiers);
+        }
+
+        if (Array.isArray(settings.paymentProcessors)) {
+          setPaymentProcessors(settings.paymentProcessors);
+        }
+      } catch {
+        toast.error('Failed to load branch settings');
+      }
+    };
+
+    void loadSavedSettings();
+  }, [activeBranchId]);
+
   const handleSave = async () => {
     setSaving(true);
-    await new Promise(r => setTimeout(r, 800));
-    setSaving(false);
-    toast.success('Settings saved successfully');
+    try {
+      await saveSettings(activeBranchId, {
+        businessInfo,
+        receiptSettings,
+        accentColor,
+        taxSettings,
+        commissionRules,
+        bookingRules,
+        loyaltyTiers,
+        paymentProcessors,
+      });
+      toast.success('Settings saved successfully');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save settings';
+      toast.error(message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const InputField = ({ label, value, onChange, type = 'text', placeholder = '' }: any) => (
@@ -557,12 +625,7 @@ export function SettingsPage() {
                 <p className="text-[#6b7280] text-sm mb-6">Configure payment methods and integrations</p>
               </div>
               <div className="space-y-3">
-                {[
-                  { name: 'Stripe', desc: 'Credit/debit cards, tap to pay', active: true, color: '#6772e5' },
-                  { name: 'Square', desc: 'In-person and online payments', active: false, color: '#00d4aa' },
-                  { name: 'Cash', desc: 'Manual cash tracking', active: true, color: '#10b981' },
-                  { name: 'Gift Cards', desc: 'Branded gift card program', active: true, color: '#f59e0b' },
-                ].map(processor => (
+                {paymentProcessors.map(processor => (
                   <div key={processor.name} className="flex items-center justify-between p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${processor.color}15` }}>
@@ -577,7 +640,13 @@ export function SettingsPage() {
                       {processor.active ? (
                         <span className="text-xs px-2.5 py-1 rounded-lg text-[#10b981]" style={{ background: 'rgba(16,185,129,0.1)', fontWeight: 600 }}>Active</span>
                       ) : (
-                        <button className="text-xs px-3 py-1.5 rounded-xl text-white bg-[#2563EB] hover:bg-[#1d4ed8] transition-all" style={{ fontWeight: 600 }}>Connect</button>
+                        <button
+                          onClick={() => setPaymentProcessors(prev => prev.map(item => item.name === processor.name ? { ...item, active: true } : item))}
+                          className="text-xs px-3 py-1.5 rounded-xl text-white bg-[#2563EB] hover:bg-[#1d4ed8] transition-all"
+                          style={{ fontWeight: 600 }}
+                        >
+                          Connect
+                        </button>
                       )}
                     </div>
                   </div>

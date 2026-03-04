@@ -4,10 +4,15 @@ import { router } from './routes';
 import { Toaster } from 'sonner';
 import { useThemeStore } from './store/useThemeStore';
 import { useSettingsStore } from './store/useSettingsStore';
+import { useAuthStore } from './store/useAuthStore';
+import { useBranchStore } from './store/useBranchStore';
+import { initializeOfflineSync } from './lib/supabaseData';
 
 export default function App() {
   const { mode } = useThemeStore();
   const { accentColor } = useSettingsStore();
+  const initializeAuth = useAuthStore(state => state.initializeAuth);
+  const refreshBranches = useBranchStore(state => state.refreshBranches);
 
   const toHex = (value: number) => value.toString(16).padStart(2, '0');
 
@@ -46,6 +51,12 @@ export default function App() {
       root.style.colorScheme = 'light';
     }
   }, [mode]);
+
+  useEffect(() => {
+    void initializeAuth();
+    void refreshBranches();
+    initializeOfflineSync();
+  }, [initializeAuth, refreshBranches]);
 
   const isDark = mode === 'dark';
 

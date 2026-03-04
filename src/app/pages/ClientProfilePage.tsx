@@ -1,14 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import {
   ArrowLeft, Phone, Mail, Calendar, DollarSign, Scissors,
   Star, CreditCard, Crown, MessageSquare, Award, Edit3,
   Clock, CheckCircle, Pencil, Save, X, Plus, Trash2, Shield
 } from 'lucide-react';
-import { mockClients } from '../data/mockData';
 import { toast } from 'sonner';
+import {
+  getAppointments,
+  getClientById,
+  getSales,
+  getSettings,
+  saveSettings,
+  updateClient,
+  type UiClient,
+} from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
 
-const visitHistory = [
+const fallbackVisitHistory = [
   { date: 'Mar 1, 2026', service: 'Premium Cut + Beard', barber: 'Jordan Blake', price: 85, status: 'completed' },
   { date: 'Feb 15, 2026', service: 'Master Fade', barber: 'Jordan Blake', price: 65, status: 'completed' },
   { date: 'Feb 1, 2026', service: 'Classic Cut', barber: 'Alex Torres', price: 45, status: 'completed' },
@@ -29,30 +38,183 @@ const defaultBenefits: Record<MembershipTier, string[]> = {
   VIP: ['Unlimited cuts', 'Priority booking', '30% off products', 'Free beard trim monthly', 'VIP lounge access'],
 };
 
+type VisitHistoryItem = {
+  date: string;
+  service: string;
+  barber: string;
+  price: number;
+  status: 'completed';
+};
+
+type SavedPaymentMethod = {
+  type: string;
+  last4: string;
+  exp: string;
+  default: boolean;
+};
+
+const defaultPaymentMethods: SavedPaymentMethod[] = [
+  { type: 'Visa', last4: '4242', exp: '12/27', default: true },
+  { type: 'Mastercard', last4: '8888', exp: '06/26', default: false },
+];
+
+const formatDate = (isoLike: string) => {
+  const date = new Date(`${isoLike}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return isoLike;
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 export function ClientProfilePage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const [activeTab, setActiveTab] = useState('Overview');
   const [note, setNote] = useState('');
 
-  const client = mockClients.find(c => c.id === id) || mockClients[0];
+  const [client, setClient] = useState<UiClient | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [visitHistory, setVisitHistory] = useState<VisitHistoryItem[]>([]);
+  const [savedNotes, setSavedNotes] = useState<string[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState(defaultPaymentMethods);
 
   // Membership edit state
   const [editingMembership, setEditingMembership] = useState(false);
-  const [membership, setMembership] = useState<MembershipTier>((client.membership as MembershipTier) || 'None');
-  const [benefits, setBenefits] = useState<string[]>(defaultBenefits[(client.membership as MembershipTier)] || []);
+  const [membership, setMembership] = useState<MembershipTier>('None');
+  const [benefits, setBenefits] = useState<string[]>(defaultBenefits.None);
   const [newBenefit, setNewBenefit] = useState('');
   const [renewalDate, setRenewalDate] = useState('2026-04-01');
+  const [savedMembershipState, setSavedMembershipState] = useState<{
+    membership: MembershipTier;
+    benefits: string[];
+    renewalDate: string;
+  }>({
+    membership: 'None',
+    benefits: defaultBenefits.None,
+    renewalDate: '2026-04-01',
+  });
 
-  const handleMembershipSave = () => {
-    setEditingMembership(false);
-    toast.success(`Membership updated to ${membership}`);
+  const loadProfile = async () => {
+    if (!id) {
+      navigate('/clients');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const profile = await getClientById(id);
+      if (!profile) {
+        toast.error('Client not found');
+        navigate('/clients');
+        return;
+      }
+
+      const [salesRows, appointmentRows, settings] = await Promise.all([
+        getSales(activeBranchId),
+        getAppointments(activeBranchId),
+        getSettings(activeBranchId),
+      ]);
+
+      const salesHistory = salesRows
+        .filter(sale => sale.customerName === profile.name || sale.customerPhone === profile.phone)
+        .map(sale => ({
+          date: formatDate(sale.date),
+          service: sale.services.map(item => item.name).join(', '),
+          barber: sale.barberName || profile.barber,
+          price: sale.total,
+          status: 'completed' as const,
+        }));
+
+      const appointmentHistory = appointmentRows
+        .filter(appt => appt.clientId === profile.id || appt.client === profile.name)
+        .map(appt => ({
+          date: formatDate(appt.date),
+          service: appt.service,
+          barber: appt.barber,
+          price: appt.price,
+          status: 'completed' as const,
+        }));
+
+      const history = salesHistory.length > 0 ? salesHistory : (appointmentHistory.length > 0 ? appointmentHistory : fallbackVisitHistory);
+
+      const notesByClient = (settings?.clientNotes || {}) as Record<string, string[]>;
+      const membershipMeta = (settings?.clientMembershipMeta || {}) as Record<string, { benefits?: string[]; renewalDate?: string }>;
+      const paymentMethodsByClient = (settings?.clientPaymentMethods || {}) as Record<string, SavedPaymentMethod[]>;
+      const memberTier = membershipTiers.includes(profile.membership as MembershipTier)
+        ? (profile.membership as MembershipTier)
+        : 'None';
+      const profileMeta = membershipMeta[profile.id] || {};
+      const memberBenefits = Array.isArray(profileMeta.benefits)
+        ? profileMeta.benefits
+        : defaultBenefits[memberTier];
+      const memberRenewalDate = typeof profileMeta.renewalDate === 'string'
+        ? profileMeta.renewalDate
+        : '2026-04-01';
+
+      setClient(profile);
+      setVisitHistory(history);
+      setSavedNotes(Array.isArray(notesByClient[profile.id]) ? notesByClient[profile.id] : []);
+      setPaymentMethods(
+        Array.isArray(paymentMethodsByClient[profile.id]) && paymentMethodsByClient[profile.id].length > 0
+          ? paymentMethodsByClient[profile.id]
+          : defaultPaymentMethods,
+      );
+      setMembership(memberTier);
+      setBenefits(memberBenefits);
+      setRenewalDate(memberRenewalDate);
+      setSavedMembershipState({
+        membership: memberTier,
+        benefits: memberBenefits,
+        renewalDate: memberRenewalDate,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load client profile';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    void loadProfile();
+  }, [id, activeBranchId]);
+
+  const handleMembershipSave = async () => {
+    if (!client) return;
+
+    try {
+      await updateClient(client.id, { membership });
+      const settings = await getSettings(activeBranchId);
+      const membershipMeta = {
+        ...(settings?.clientMembershipMeta || {}),
+        [client.id]: {
+          benefits,
+          renewalDate,
+        },
+      };
+      await saveSettings(activeBranchId, {
+        ...(settings || {}),
+        clientMembershipMeta: membershipMeta,
+      });
+
+      setClient(prev => (prev ? { ...prev, membership } : prev));
+      setSavedMembershipState({ membership, benefits, renewalDate });
+      setEditingMembership(false);
+      toast.success(`Membership updated to ${membership}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update membership';
+      toast.error(message);
+    }
+  };
+
   const handleMembershipCancel = () => {
-    setMembership((client.membership as MembershipTier) || 'None');
-    setBenefits(defaultBenefits[(client.membership as MembershipTier)] || []);
+    setMembership(savedMembershipState.membership);
+    setBenefits(savedMembershipState.benefits);
+    setRenewalDate(savedMembershipState.renewalDate);
     setEditingMembership(false);
   };
+
   const addBenefit = () => {
     const val = newBenefit.trim();
     if (!val) return;
@@ -60,6 +222,70 @@ export function ClientProfilePage() {
     setNewBenefit('');
   };
   const removeBenefit = (idx: number) => setBenefits(prev => prev.filter((_, i) => i !== idx));
+
+  const handleSaveNote = async () => {
+    if (!client) return;
+    const value = note.trim();
+    if (!value) return;
+
+    try {
+      const nextNotes = [value, ...savedNotes];
+      const settings = await getSettings(activeBranchId);
+      const notesByClient = {
+        ...(settings?.clientNotes || {}),
+        [client.id]: nextNotes,
+      };
+
+      await saveSettings(activeBranchId, {
+        ...(settings || {}),
+        clientNotes: notesByClient,
+      });
+
+      setSavedNotes(nextNotes);
+      setNote('');
+      toast.success('Note saved');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save note';
+      toast.error(message);
+    }
+  };
+
+  const handleAddPaymentMethod = async () => {
+    if (!client) return;
+
+    const suffix = String(Math.floor(1000 + Math.random() * 9000));
+    const nextPaymentMethods: SavedPaymentMethod[] = [
+      ...paymentMethods,
+      { type: 'Card', last4: suffix, exp: '12/30', default: paymentMethods.length === 0 },
+    ];
+
+    try {
+      const settings = await getSettings(activeBranchId);
+      const paymentMethodsByClient = {
+        ...(settings?.clientPaymentMethods || {}),
+        [client.id]: nextPaymentMethods,
+      };
+
+      await saveSettings(activeBranchId, {
+        ...(settings || {}),
+        clientPaymentMethods: paymentMethodsByClient,
+      });
+
+      setPaymentMethods(nextPaymentMethods);
+      toast.success('Payment method added');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add payment method';
+      toast.error(message);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="p-6 text-[#9ca3af]">Loading client profile...</div>;
+  }
+
+  if (!client) {
+    return <div className="p-6 text-[#ef4444]">Client not found.</div>;
+  }
 
   const loyaltyColors: Record<string, { color: string; bg: string }> = {
     Platinum: { color: '#e5e7eb', bg: 'rgba(229,231,235,0.1)' },
@@ -85,13 +311,24 @@ export function ClientProfilePage() {
               {client.avatar}
             </div>
             <div className="flex gap-2 mt-10">
-              <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-[#9ca3af] hover:text-white transition-all" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                onClick={() => { window.location.href = `tel:${client.phone}`; }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-[#9ca3af] hover:text-white transition-all"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
                 <Phone size={13} /> Call
               </button>
-              <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-[#9ca3af] hover:text-white transition-all" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                onClick={() => { window.location.href = `sms:${client.phone}`; }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-[#9ca3af] hover:text-white transition-all"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
                 <MessageSquare size={13} /> SMS
               </button>
-              <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-white bg-[#2563EB] hover:bg-[#1d4ed8] transition-all">
+              <button
+                onClick={() => navigate('/appointments', { state: { clientId: client.id, clientName: client.name } })}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-white bg-[#2563EB] hover:bg-[#1d4ed8] transition-all"
+              >
                 <Calendar size={13} /> Book
               </button>
             </div>
@@ -123,7 +360,7 @@ export function ClientProfilePage() {
               { label: 'Total Visits', value: client.visits, icon: Scissors, color: '#2563EB' },
               { label: 'Lifetime Spend', value: `$${client.spend.toLocaleString()}`, icon: DollarSign, color: '#10b981' },
               { label: 'Preferred Barber', value: client.barber.split(' ')[0], icon: Star, color: '#f59e0b' },
-              { label: 'Last Visit', value: 'Mar 1', icon: Calendar, color: '#8b5cf6' },
+              { label: 'Last Visit', value: client.lastVisit || '—', icon: Calendar, color: '#8b5cf6' },
             ].map(stat => (
               <div key={stat.label} className="text-center p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)' }}>
                 <div className="flex justify-center mb-1.5">
@@ -181,13 +418,12 @@ export function ClientProfilePage() {
           <div className="p-5 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-white text-sm" style={{ fontWeight: 600 }}>Saved Payment Methods</h3>
-              <button className="text-xs text-[#2563EB]">+ Add</button>
+              <button onClick={() => void handleAddPaymentMethod()} className="text-xs text-[#2563EB]">
+                + Add
+              </button>
             </div>
             <div className="space-y-2">
-              {[
-                { type: 'Visa', last4: '4242', exp: '12/27', default: true },
-                { type: 'Mastercard', last4: '8888', exp: '06/26', default: false },
-              ].map((card, i) => (
+              {paymentMethods.map((card, i) => (
                 <div key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="w-8 h-8 rounded-lg bg-[#2563EB]/10 flex items-center justify-center">
                     <CreditCard size={14} className="text-[#2563EB]" />
@@ -208,7 +444,7 @@ export function ClientProfilePage() {
 
       {activeTab === 'History' && (
         <div className="rounded-2xl overflow-hidden" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
-          <div className="divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
+          <div className="divide-y divide-white/[0.04]">
             {visitHistory.map((v, i) => (
               <div key={i} className="flex items-center gap-4 px-5 py-4">
                 <div className="text-center flex-shrink-0 w-14">
@@ -237,12 +473,15 @@ export function ClientProfilePage() {
               <span className="text-white text-sm" style={{ fontWeight: 600 }}>Barber Notes</span>
             </div>
             <div className="space-y-2 mb-3">
-              {['Prefers tight fade on sides, 1.5 guard', 'Always asks for edge up on hairline', 'Allergic to certain pomades — use organic products only'].map((n, i) => (
+              {savedNotes.map((n, i) => (
                 <div key={i} className="flex items-start gap-2 p-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)' }}>
                   <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-1.5 flex-shrink-0" />
                   <span className="text-sm text-[#d1d5db]">{n}</span>
                 </div>
               ))}
+              {savedNotes.length === 0 && (
+                <div className="text-xs text-[#6b7280]">No notes saved yet.</div>
+              )}
             </div>
             <div className="flex gap-2">
               <input
@@ -251,7 +490,7 @@ export function ClientProfilePage() {
                 placeholder="Add a note..."
                 className="flex-1 bg-[#111111] border border-white/[0.08] rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#3f3f46] focus:border-[#2563EB]/50 transition-all"
               />
-              <button className="px-4 py-2 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all" style={{ fontWeight: 600 }}>Save</button>
+              <button onClick={handleSaveNote} className="px-4 py-2 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all" style={{ fontWeight: 600 }}>Save</button>
             </div>
           </div>
         </div>

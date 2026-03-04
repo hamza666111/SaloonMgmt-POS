@@ -1,60 +1,65 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scissors, Eye, EyeOff, ArrowRight, Zap } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuthStore, Role } from '../store/useAuthStore';
+import { useAuthStore } from '../store/useAuthStore';
 import { useBranchStore } from '../store/useBranchStore';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const login = useAuthStore((state) => state.login);
   const setActiveBranch = useBranchStore((state) => state.setActiveBranch);
+  const refreshBranches = useBranchStore((state) => state.refreshBranches);
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('saloon_remember_device') !== '0';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!rememberDevice) return;
+
+    const rememberedEmail = window.localStorage.getItem('saloon_last_email') || '';
+    if (rememberedEmail) {
+      setEmail(rememberedEmail);
+    }
+  }, [rememberDevice]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    
-    // MOCK AUTHENTICATION LOGIC BASED ON EMAIL PREFIX
-    await new Promise(r => setTimeout(r, 1200));
-    
-    let role: Role = 'receptionist';
-    let fullName = 'Guest Receptionist';
-    let permissions: string[] = ['sales:create'];
 
-    if (email.includes('admin')) {
-      role = 'admin';
-      fullName = 'Super Admin';
-      permissions = ['*'];
-    } else if (email.includes('manager')) {
-      role = 'manager';
-      fullName = 'Store Manager';
-      permissions = ['staff:view', 'staff:edit', 'reports:view', 'inventory:edit'];
-    } else if (email.includes('barber')) {
-      role = 'barber';
-      fullName = 'Senior Barber';
-      permissions = ['appointments:view', 'appointments:edit', 'sales:create'];
+    try {
+      await login(email, password);
+      await refreshBranches();
+
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser?.branchId) {
+        setActiveBranch(currentUser.branchId);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('saloon_remember_device', rememberDevice ? '1' : '0');
+        if (rememberDevice) {
+          window.localStorage.setItem('saloon_last_email', email.trim());
+        } else {
+          window.localStorage.removeItem('saloon_last_email');
+        }
+      }
+
+      toast.success(`Welcome back, ${currentUser?.fullName || 'User'} (${currentUser?.role || 'staff'})`);
+      navigate('/dashboard');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to sign in';
+      toast.error(message);
+    } finally {
+      setLoading(false);
     }
-
-    setAuth({
-      id: Math.random().toString(36).substring(7),
-      fullName,
-      role,
-      branchId: 'branch-1',
-      permissions
-    });
-    
-    setActiveBranch('branch-1');
-
-    setLoading(false);
-    toast.success(`Welcome back, ${fullName} (${role})`);
-    
-    // Instead of forcing 2FA, directly go to dashboard to speed up development
-    navigate('/dashboard');
   };
 
   return (
@@ -126,12 +131,14 @@ export function LoginPage() {
             </div>
 
             <div className="flex items-center gap-2 pt-1">
-              <div
+              <button
+                type="button"
                 className="w-4 h-4 rounded-md bg-[#1a1a1a] border border-white/[0.1] flex items-center justify-center cursor-pointer"
-                onClick={() => {}}
+                onClick={() => setRememberDevice(prev => !prev)}
+                aria-pressed={rememberDevice}
               >
-                <div className="w-2 h-2 rounded-sm bg-[#2563EB]" />
-              </div>
+                {rememberDevice && <div className="w-2 h-2 rounded-sm bg-[#2563EB]" />}
+              </button>
               <span className="text-sm text-[#6b7280]">Remember this device</span>
             </div>
 

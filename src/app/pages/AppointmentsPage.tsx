@@ -1,11 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Calendar, List,
-  Clock, X, Check, Search, ChevronDown, User, Scissors, UserPlus, Phone, Mail
+  X, Check, User, Scissors, UserPlus, Phone, Mail
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { mockAppointments, mockClients, mockServices, mockStaff } from '../data/mockData';
 import { useBranchStore } from '../store/useBranchStore';
+import {
+  createAppointment,
+  createClient,
+  getAppointments,
+  getClients,
+  getServices,
+  getStaff,
+  updateAppointmentStatus,
+  type UiAppointment,
+  type UiClient,
+  type UiService,
+  type UiStaff,
+} from '../lib/supabaseData';
 
 const statusColors: Record<string, { bg: string; text: string; label: string }> = {
   confirmed: { bg: 'rgba(37,99,235,0.12)', text: '#2563EB', label: 'Confirmed' },
@@ -13,6 +25,7 @@ const statusColors: Record<string, { bg: string; text: string; label: string }> 
   'in-progress': { bg: 'rgba(245,158,11,0.12)', text: '#f59e0b', label: 'In Progress' },
   pending: { bg: 'rgba(107,114,128,0.12)', text: '#9ca3af', label: 'Pending' },
   'no-show': { bg: 'rgba(239,68,68,0.12)', text: '#ef4444', label: 'No Show' },
+  cancelled: { bg: 'rgba(239,68,68,0.12)', text: '#ef4444', label: 'Cancelled' },
 };
 
 const barberColors: Record<string, string> = {
@@ -23,45 +36,128 @@ const barberColors: Record<string, string> = {
 };
 
 const hours = ['09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00','19:00'];
-const allBarbers = ['Jordan Blake', 'Alex Torres', 'Sam Rivera', 'Chris Morgan'];
 
 export function AppointmentsPage() {
   const activeBranchId = useBranchStore(state => state.activeBranchId);
-  const branches = useBranchStore(state => state.branches);
-
-  // Deterministically assign barbers to branches for dummy data isolation
-  const barbers = allBarbers.filter((b, i) => {
-    const assignedBranchId = branches[i % Math.max(1, branches.length)]?.id || activeBranchId;
-    return assignedBranchId === activeBranchId;
-  });
+  const [clients, setClients] = useState<UiClient[]>([]);
+  const [services, setServices] = useState<UiService[]>([]);
+  const [staff, setStaff] = useState<UiStaff[]>([]);
+  const [appointments, setAppointments] = useState<UiAppointment[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const barbers = useMemo(
+    () => staff.filter(member => member.status === 'Active').map(member => member.name),
+    [staff],
+  );
 
   const [view, setView] = useState<'day' | 'week' | 'list'>('day');
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [showModal, setShowModal] = useState(false);
-  const [selectedAppt, setSelectedAppt] = useState<any>(null);
+  const [selectedAppt, setSelectedAppt] = useState<UiAppointment | null>(null);
   const [newAppt, setNewAppt] = useState({ client: '', service: '', barber: '', time: '10:00', notes: '', deposit: false, addons: [] as string[] });
   const [addNewClient, setAddNewClient] = useState(false);
   const [newClient, setNewClient] = useState({ name: '', phone: '', email: '' });
 
-  const handleSave = () => {
+  const dateKey = currentDate.toISOString().split('T')[0];
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const [clientRows, serviceRows, staffRows, appointmentRows] = await Promise.all([
+        getClients(activeBranchId),
+        getServices(activeBranchId),
+        getStaff(activeBranchId),
+        getAppointments(activeBranchId),
+      ]);
+      setClients(clientRows);
+      setServices(serviceRows);
+      setStaff(staffRows);
+      setAppointments(appointmentRows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load appointments data';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, [activeBranchId]);
+
+  const appointmentsForDate = useMemo(
+    () => appointments.filter(appt => appt.date === dateKey),
+    [appointments, dateKey],
+  );
+
+  const handleSave = async () => {
     if (addNewClient && !newClient.name.trim()) {
       toast.error('Please enter the customer name');
       return;
     }
     const clientName = addNewClient ? newClient.name.trim() : newAppt.client;
     if (!clientName) { toast.error('Please select or add a client'); return; }
-    toast.success(addNewClient ? `Appointment scheduled for ${clientName}` : 'Appointment scheduled');
-    setShowModal(false);
-    setNewAppt({ client: '', service: '', barber: '', time: '10:00', notes: '', deposit: false, addons: [] });
-    setAddNewClient(false);
-    setNewClient({ name: '', phone: '', email: '' });
+
+    if (!newAppt.service || !newAppt.barber) {
+      toast.error('Please select service and barber');
+      return;
+    }
+
+    const selectedService = services.find(service => service.name === newAppt.service);
+    const selectedStaff = staff.find(member => member.name === newAppt.barber);
+    const selectedClient = clients.find(client => client.name === clientName);
+
+    const addonTotal = newAppt.addons.reduce((sum, addon) => {
+      const match = addon.match(/\+(\$?)(\d+(?:\.\d+)?)/);
+      if (!match) return sum;
+      return sum + Number(match[2]);
+    }, 0);
+
+    try {
+      let createdClientId = selectedClient?.id;
+
+      if (addNewClient) {
+        const created = await createClient({
+          name: newClient.name.trim(),
+          phone: newClient.phone,
+          email: newClient.email,
+          branchId: activeBranchId,
+        });
+        createdClientId = created.id;
+      }
+
+      await createAppointment({
+        branch_id: activeBranchId,
+        client_id: createdClientId,
+        client_name: clientName,
+        barber_id: selectedStaff?.id,
+        barber_name: newAppt.barber,
+        service_id: selectedService?.id,
+        service_name: newAppt.service,
+        date: dateKey,
+        time: newAppt.time,
+        duration: selectedService?.duration || 30,
+        price: (selectedService?.price || 0) + addonTotal,
+        notes: newAppt.notes,
+      });
+
+      await loadData();
+      toast.success(addNewClient ? `Appointment scheduled for ${clientName}` : 'Appointment scheduled');
+      setShowModal(false);
+      setNewAppt({ client: '', service: '', barber: '', time: '10:00', notes: '', deposit: false, addons: [] });
+      setAddNewClient(false);
+      setNewClient({ name: '', phone: '', email: '' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to schedule appointment';
+      toast.error(message);
+    }
   };
 
   const getApptsByBarber = (barber: string) =>
-    mockAppointments.filter(a => a.barber === barber);
+    appointmentsForDate.filter(a => a.barber === barber);
 
   const getApptAtTime = (barber: string, hour: string) => {
     const h = parseInt(hour);
-    return mockAppointments.filter(a => {
+    return appointmentsForDate.filter(a => {
       if (a.barber !== barber) return false;
       const ah = parseInt(a.time.split(':')[0]);
       return ah === h;
@@ -75,7 +171,7 @@ export function AppointmentsPage() {
         <div className="flex items-center gap-4">
           <div>
             <h1 className="text-white text-lg" style={{ fontWeight: 700 }}>Appointments</h1>
-            <p className="text-[#6b7280] text-xs mt-0.5">Tuesday, March 3, 2026</p>
+            <p className="text-[#6b7280] text-xs mt-0.5">{currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
           </div>
           <div className="hidden md:flex items-center gap-1 p-1 rounded-xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             {(['day', 'week', 'list'] as const).map(v => (
@@ -94,9 +190,33 @@ export function AppointmentsPage() {
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <button className="text-[#6b7280] hover:text-white"><ChevronLeft size={16} /></button>
-            <span className="text-white text-sm px-2" style={{ fontWeight: 500 }}>Today</span>
-            <button className="text-[#6b7280] hover:text-white"><ChevronRight size={16} /></button>
+            <button
+              onClick={() => setCurrentDate(prev => {
+                const next = new Date(prev);
+                next.setDate(prev.getDate() - 1);
+                return next;
+              })}
+              className="text-[#6b7280] hover:text-white"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setCurrentDate(new Date())}
+              className="text-white text-sm px-2"
+              style={{ fontWeight: 500 }}
+            >
+              Today
+            </button>
+            <button
+              onClick={() => setCurrentDate(prev => {
+                const next = new Date(prev);
+                next.setDate(prev.getDate() + 1);
+                return next;
+              })}
+              className="text-[#6b7280] hover:text-white"
+            >
+              <ChevronRight size={16} />
+            </button>
           </div>
           <button
             onClick={() => setShowModal(true)}
@@ -129,10 +249,11 @@ export function AppointmentsPage() {
 
       {/* Calendar Content */}
       <div className="flex-1 overflow-auto">
+        {isLoading && <div className="px-6 py-4 text-sm text-[#9ca3af]">Loading appointments...</div>}
         {view === 'list' ? (
           // List View
           <div className="p-4 lg:p-6 space-y-2 max-w-3xl">
-            {mockAppointments.filter(a => barbers.includes(a.barber)).map(appt => (
+            {appointmentsForDate.filter(a => barbers.includes(a.barber)).map(appt => (
               <div
                 key={appt.id}
                 onClick={() => setSelectedAppt(appt)}
@@ -249,14 +370,34 @@ export function AppointmentsPage() {
               ))}
               <div className="flex gap-2 pt-1">
                 <button
-                  onClick={() => { toast.success('Appointment confirmed'); setSelectedAppt(null); }}
+                  onClick={async () => {
+                    try {
+                      await updateAppointmentStatus(selectedAppt.id, 'confirmed');
+                      await loadData();
+                      toast.success('Appointment confirmed');
+                      setSelectedAppt(null);
+                    } catch (error) {
+                      const message = error instanceof Error ? error.message : 'Failed to update appointment';
+                      toast.error(message);
+                    }
+                  }}
                   className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-[#10b981]/10 text-[#10b981] text-sm transition-all hover:bg-[#10b981]/20"
                   style={{ fontWeight: 600 }}
                 >
                   <Check size={15} /> Confirm
                 </button>
                 <button
-                  onClick={() => { toast.error('Appointment cancelled'); setSelectedAppt(null); }}
+                  onClick={async () => {
+                    try {
+                      await updateAppointmentStatus(selectedAppt.id, 'cancelled');
+                      await loadData();
+                      toast.success('Appointment cancelled');
+                      setSelectedAppt(null);
+                    } catch (error) {
+                      const message = error instanceof Error ? error.message : 'Failed to cancel appointment';
+                      toast.error(message);
+                    }
+                  }}
                   className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-[#ef4444]/10 text-[#ef4444] text-sm transition-all hover:bg-[#ef4444]/20"
                   style={{ fontWeight: 600 }}
                 >
@@ -339,7 +480,7 @@ export function AppointmentsPage() {
                     <select value={newAppt.client} onChange={e => setNewAppt({...newAppt, client: e.target.value})}
                       className="w-full bg-[#111111] border border-white/[0.08] rounded-xl pl-9 pr-4 py-3 text-sm text-white focus:border-[#2563EB]/50 transition-all appearance-none">
                       <option value="">Select existing client...</option>
-                      {mockClients.map(c => <option key={c.id} value={c.name}>{c.name} · {c.phone}</option>)}
+                      {clients.map(c => <option key={c.id} value={c.name}>{c.name} · {c.phone}</option>)}
                     </select>
                   </div>
                 )}
@@ -352,7 +493,7 @@ export function AppointmentsPage() {
                   <select value={newAppt.service} onChange={e => setNewAppt({...newAppt, service: e.target.value})}
                     className="w-full bg-[#111111] border border-white/[0.08] rounded-xl pl-9 pr-4 py-3 text-sm text-white focus:border-[#2563EB]/50 transition-all appearance-none">
                     <option value="">Select service...</option>
-                    {mockServices.map(s => <option key={s.id} value={s.name}>{s.name} · ${s.price}</option>)}
+                    {services.map(s => <option key={s.id} value={s.name}>{s.name} · ${s.price}</option>)}
                   </select>
                 </div>
               </div>
@@ -360,7 +501,7 @@ export function AppointmentsPage() {
               <div>
                 <label className="text-xs text-[#9ca3af] mb-2 block" style={{ letterSpacing: '0.05em' }}>BARBER</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {mockStaff.filter(s => s.status === 'Active').map(s => (
+                  {staff.filter(s => s.status === 'Active').map(s => (
                     <button
                       key={s.id}
                       onClick={() => setNewAppt({...newAppt, barber: s.name})}

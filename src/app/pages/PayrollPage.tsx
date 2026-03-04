@@ -1,30 +1,109 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   DollarSign, Download, Check, ChevronDown, TrendingUp,
   Calendar, AlertCircle, CheckCircle, Clock, Filter
 } from 'lucide-react';
-import { mockPayroll } from '../data/mockData';
 import { toast } from 'sonner';
+import { approvePayrollRecord, getPayroll, type UiPayroll } from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
 
 const staffColors = ['#2563EB', '#8b5cf6', '#10b981', '#f59e0b'];
 
 export function PayrollPage() {
-  const [period, setPeriod] = useState('Feb 16-28 2026');
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
+  const [period, setPeriod] = useState('');
+  const [payrollRows, setPayrollRows] = useState<UiPayroll[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [approving, setApproving] = useState<string | null>(null);
-  const [approved, setApproved] = useState<string[]>(['3']);
 
-  const totalPayout = mockPayroll.reduce((s, p) => s + p.netPayout, 0);
-  const pendingCount = mockPayroll.filter(p => !approved.includes(p.id)).length;
+  const loadPayroll = async () => {
+    setIsLoading(true);
+    try {
+      const rows = await getPayroll(activeBranchId);
+      setPayrollRows(rows);
+      if (rows.length > 0) {
+        const defaultPeriod = rows[0].period;
+        setPeriod(prev => prev || defaultPeriod);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load payroll';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadPayroll();
+  }, [activeBranchId]);
+
+  const periodOptions = useMemo(
+    () => Array.from(new Set(payrollRows.map(row => row.period))),
+    [payrollRows],
+  );
+
+  const filteredPayroll = useMemo(
+    () => (period ? payrollRows.filter(row => row.period === period) : payrollRows),
+    [period, payrollRows],
+  );
+
+  const approved = filteredPayroll
+    .filter(row => row.status.toLowerCase() === 'approved')
+    .map(row => row.id);
+
+  const totalPayout = filteredPayroll.reduce((sum, row) => sum + row.netPayout, 0);
+  const pendingCount = filteredPayroll.filter(row => !approved.includes(row.id)).length;
+  const totalRevenue = filteredPayroll.reduce((sum, row) => sum + row.serviceRevenue, 0);
+  const avgCommission = filteredPayroll.length
+    ? filteredPayroll.reduce((sum, row) => {
+      if (!row.serviceRevenue) return sum;
+      return sum + ((row.commissionEarned / row.serviceRevenue) * 100);
+    }, 0) / filteredPayroll.length
+    : 0;
 
   const handleApprove = async (id: string) => {
     setApproving(id);
-    await new Promise(r => setTimeout(r, 800));
-    setApproving(null);
-    setApproved(prev => [...prev, id]);
-    toast.success('Payroll approved and processed');
+    try {
+      await approvePayrollRecord(id);
+      await loadPayroll();
+      toast.success('Payroll approved and processed');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to approve payroll';
+      toast.error(message);
+    } finally {
+      setApproving(null);
+    }
   };
 
   const handleExport = () => {
+    if (filteredPayroll.length === 0) {
+      toast.error('No payroll data to export');
+      return;
+    }
+
+    const headers = ['Barber', 'Service Revenue', 'Commission Earned', 'Tips', 'Product Commission', 'Booth Rent', 'Net Payout', 'Status', 'Period'];
+    const rows = filteredPayroll.map(row => [
+      row.barber,
+      row.serviceRevenue,
+      row.commissionEarned,
+      row.tips,
+      row.productCommission,
+      row.boothRent,
+      row.netPayout,
+      row.status,
+      row.period,
+    ]);
+
+    const csv = [headers, ...rows]
+      .map(line => line.map(value => `"${String(value).replaceAll('"', '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `payroll-${period || 'all'}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
     toast.success('Payroll report exported to CSV');
   };
 
@@ -43,7 +122,7 @@ export function PayrollPage() {
               onChange={e => setPeriod(e.target.value)}
               className="bg-[#1a1a1a] border border-white/[0.06] rounded-xl pl-4 pr-9 py-2.5 text-sm text-[#9ca3af] focus:border-[#2563EB]/50 transition-all appearance-none"
             >
-              {['Feb 16-28 2026', 'Feb 1-15 2026', 'Jan 16-31 2026', 'Jan 1-15 2026'].map(p => (
+              {periodOptions.map(p => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
@@ -64,8 +143,8 @@ export function PayrollPage() {
         {[
           { label: 'Total Payout', value: `$${totalPayout.toLocaleString()}`, sub: 'This period', color: '#2563EB', icon: DollarSign },
           { label: 'Pending Approval', value: pendingCount.toString(), sub: 'Barbers', color: '#f59e0b', icon: Clock },
-          { label: 'Total Revenue', value: '$27,440', sub: 'Generated', color: '#10b981', icon: TrendingUp },
-          { label: 'Avg Commission', value: '51.25%', sub: 'Across team', color: '#8b5cf6', icon: Filter },
+          { label: 'Total Revenue', value: `$${totalRevenue.toLocaleString()}`, sub: 'Generated', color: '#10b981', icon: TrendingUp },
+          { label: 'Avg Commission', value: `${avgCommission.toFixed(2)}%`, sub: 'Across team', color: '#8b5cf6', icon: Filter },
         ].map(card => (
           <div key={card.label} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="flex items-center justify-between mb-2">
@@ -96,6 +175,9 @@ export function PayrollPage() {
         </div>
 
         {/* Desktop table */}
+        {isLoading && (
+          <div className="px-5 py-4 text-sm text-[#9ca3af]">Loading payroll records...</div>
+        )}
         <div className="hidden lg:block">
           <div className="grid gap-0 px-5 py-3 text-xs text-[#4b5563]" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr 1fr 1.5fr', borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 600, letterSpacing: '0.05em' }}>
             <div>BARBER</div>
@@ -107,8 +189,8 @@ export function PayrollPage() {
             <div>NET PAYOUT</div>
             <div>STATUS</div>
           </div>
-          <div className="divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
-            {mockPayroll.map((row, idx) => {
+          <div className="divide-y divide-white/[0.04]">
+            {filteredPayroll.map((row, idx) => {
               const isApproved = approved.includes(row.id);
               const isApproving = approving === row.id;
               return (
@@ -154,8 +236,8 @@ export function PayrollPage() {
         </div>
 
         {/* Mobile cards */}
-        <div className="lg:hidden divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
-          {mockPayroll.map((row, idx) => {
+        <div className="lg:hidden divide-y divide-white/[0.04]">
+          {filteredPayroll.map((row, idx) => {
             const isApproved = approved.includes(row.id);
             return (
               <div key={row.id} className="p-5 space-y-4">

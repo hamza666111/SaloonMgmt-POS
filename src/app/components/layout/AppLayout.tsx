@@ -38,7 +38,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
 
   const handleLogout = () => {
     clearAuth();
-    // In a real app, you'd also clear Supabase tokens here
+    // Clear any persisted auth artifacts here in a real app
   };
 
   // Filter navigation items based on user role

@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ReceiptText, Search, User, Scissors, Phone, CreditCard, Banknote, Smartphone, CheckCircle2 } from 'lucide-react';
-import { mockInvoices } from '../data/mockData';
 import { Modal } from '../components/ui/modal';
+import { getSales, type UiInvoice } from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
+import { toast } from 'sonner';
 
 const datePresets = ['All', 'Today', 'This Month', 'Selected Month', 'Custom Range'] as const;
 
@@ -15,7 +17,7 @@ type InvoiceFilterState = {
   endDate: string;
 };
 
-type Invoice = typeof mockInvoices[number];
+type Invoice = UiInvoice;
 
 const formatDateLocal = (value: Date) => {
   const year = value.getFullYear();
@@ -25,6 +27,7 @@ const formatDateLocal = (value: Date) => {
 };
 
 export function InvoicesPage() {
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const [filters, setFilters] = useState<InvoiceFilterState>({
     search: '',
     datePreset: 'This Month',
@@ -33,13 +36,39 @@ export function InvoicesPage() {
     endDate: '',
   });
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadInvoices = async () => {
+      setIsLoading(true);
+      try {
+        const rows = await getSales(activeBranchId);
+        if (!mounted) return;
+        setInvoices(rows);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load invoices';
+        toast.error(message);
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    void loadInvoices();
+
+    return () => {
+      mounted = false;
+    };
+  }, [activeBranchId]);
 
   const filteredInvoices = useMemo(() => {
     const normalizedSearch = filters.search.trim().toLowerCase();
     const today = formatDateLocal(new Date());
     const currentMonth = today.slice(0, 7);
 
-    return mockInvoices.filter(invoice => {
+    return invoices.filter(invoice => {
       const matchesSearch =
         normalizedSearch.length === 0 ||
         invoice.invoiceNumber.toLowerCase().includes(normalizedSearch) ||
@@ -75,7 +104,7 @@ export function InvoicesPage() {
 
       return true;
     });
-  }, [filters]);
+  }, [filters, invoices]);
 
   const totalRevenue = filteredInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
   const avgTicket = filteredInvoices.length > 0 ? totalRevenue / filteredInvoices.length : 0;
@@ -169,6 +198,7 @@ export function InvoicesPage() {
           <div className="col-span-1 text-right">TOTAL</div>
         </div>
         <div className="divide-y divide-white/[0.04]">
+          {isLoading && <div className="px-5 py-4 text-sm text-[#9ca3af]">Loading invoices...</div>}
           {filteredInvoices.map(invoice => (
             <div
               key={invoice.id}
@@ -263,7 +293,7 @@ export function InvoicesPage() {
           const serviceCharge = parseFloat((subtotal * 0.05).toFixed(2));
           const tax = parseFloat((taxAndCharges - serviceCharge).toFixed(2));
           const taxRate = subtotal > 0 ? ((taxAndCharges / subtotal) * 100).toFixed(1) : '0.0';
-          const paymentIcons: Record<string, React.ReactNode> = {
+          const paymentIcons: Record<string, JSX.Element> = {
             card: <CreditCard size={13} />,
             cash: <Banknote size={13} />,
             tap: <Smartphone size={13} />,

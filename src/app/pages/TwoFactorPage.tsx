@@ -1,13 +1,71 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scissors, Shield, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+
+const RESEND_COOLDOWN_SECONDS = 30;
 
 export function TwoFactorPage() {
   const navigate = useNavigate();
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldown((prev) => {
+        if (prev <= 1) {
+          window.clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [resendCooldown]);
+
+  const refreshChallenge = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setFactorId(null);
+      setChallengeId(null);
+      return;
+    }
+
+    const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+    if (factorsError) {
+      throw new Error(factorsError.message);
+    }
+
+    const primaryFactor = factorsData?.totp?.find((factor) => factor.status === 'verified') || factorsData?.totp?.[0];
+    if (!primaryFactor) {
+      setFactorId(null);
+      setChallengeId(null);
+      return;
+    }
+
+    const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+      factorId: primaryFactor.id,
+    });
+
+    if (challengeError) {
+      throw new Error(challengeError.message);
+    }
+
+    setFactorId(primaryFactor.id);
+    setChallengeId(challengeData.id);
+  };
+
+  useEffect(() => {
+    void refreshChallenge();
+  }, []);
 
   const handleChange = (idx: number, val: string) => {
     if (!/^\d*$/.test(val)) return;
@@ -29,11 +87,32 @@ export function TwoFactorPage() {
   const handleVerify = async (fullCode?: string) => {
     const c = fullCode || code.join('');
     if (c.length < 6) return toast.error('Enter all 6 digits');
+
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1000));
-    setLoading(false);
-    toast.success('Verified successfully');
-    navigate('/branch-selector');
+    try {
+      if (factorId && challengeId && supabase && isSupabaseConfigured) {
+        const { error } = await supabase.auth.mfa.verify({
+          factorId,
+          challengeId,
+          code: c,
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+      }
+
+      toast.success('Verified successfully');
+      navigate('/branch-selector');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid or expired verification code';
+      toast.error(message);
+      setCode(['', '', '', '', '', '']);
+      inputs.current[0]?.focus();
+      void refreshChallenge();
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -91,7 +170,26 @@ export function TwoFactorPage() {
 
           <div className="text-center mt-4">
             <span className="text-sm text-[#6b7280]">Didn't receive a code? </span>
-            <button className="text-sm text-[#2563EB] hover:text-blue-400 transition-colors">Resend</button>
+            <button
+              onClick={async () => {
+                if (resendCooldown > 0) return;
+
+                try {
+                  await refreshChallenge();
+                  setCode(['', '', '', '', '', '']);
+                  inputs.current[0]?.focus();
+                  setResendCooldown(RESEND_COOLDOWN_SECONDS);
+                  toast.success('Verification challenge refreshed');
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : 'Unable to refresh verification challenge';
+                  toast.error(message);
+                }
+              }}
+              disabled={resendCooldown > 0}
+              className="text-sm text-[#2563EB] hover:text-blue-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend'}
+            </button>
           </div>
         </div>
 

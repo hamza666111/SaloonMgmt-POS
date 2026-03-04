@@ -1,27 +1,44 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scissors, MapPin, Users, TrendingUp, ChevronRight, Check } from 'lucide-react';
 import { toast } from 'sonner';
-
-const branches = [
-  { id: '1', name: 'Downtown', address: '123 Main St, New York, NY', staff: 5, todayRevenue: 3240, status: 'Open', capacity: 78 },
-  { id: '2', name: 'Midtown', address: '456 Park Ave, New York, NY', staff: 4, todayRevenue: 2780, status: 'Open', capacity: 65 },
-  { id: '3', name: 'Brooklyn', address: '789 Atlantic Ave, Brooklyn, NY', staff: 3, todayRevenue: 1890, status: 'Open', capacity: 52 },
-];
+import { useBranchStore } from '../store/useBranchStore';
 
 export function BranchSelectorPage() {
   const navigate = useNavigate();
+  const branches = useBranchStore(state => state.branches);
+  const setActiveBranch = useBranchStore(state => state.setActiveBranch);
+  const refreshBranches = useBranchStore(state => state.refreshBranches);
   const [selected, setSelected] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    void refreshBranches();
+  }, [refreshBranches]);
+
+  const branchCards = useMemo(() => {
+    return branches.map((branch, index) => ({
+      id: branch.id,
+      name: branch.name,
+      address: branch.address,
+      staff: 3 + (index % 4),
+      todayRevenue: 1800 + (index * 640),
+      status: branch.isActive ? 'Open' : 'Closed',
+      capacity: Math.min(92, 52 + (index * 13)),
+    }));
+  }, [branches]);
 
   const handleSelect = async (id: string) => {
     setSelected(id);
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    setLoading(false);
-    const branch = branches.find(b => b.id === id);
-    toast.success(`Entering ${branch?.name} branch`);
-    navigate('/dashboard');
+    try {
+      setActiveBranch(id);
+      const branch = branchCards.find(item => item.id === id);
+      toast.success(`Entering ${branch?.name || 'selected'} branch`);
+      navigate('/dashboard');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -39,7 +56,7 @@ export function BranchSelectorPage() {
         </div>
 
         <div className="space-y-3">
-          {branches.map(branch => (
+          {branchCards.map(branch => (
             <button
               key={branch.id}
               onClick={() => handleSelect(branch.id)}

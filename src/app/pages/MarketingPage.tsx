@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   MessageSquare, Mail, Plus, TrendingUp, Users,
-  Send, Clock, CheckCircle, X, Percent, Zap,
-  ChevronRight, BarChart2, Eye
+  Send, Clock, X, Percent, Zap,
+  BarChart2, Eye
 } from 'lucide-react';
-import { mockCampaigns } from '../data/mockData';
 import { toast } from 'sonner';
+import {
+  createCampaign,
+  getCampaigns,
+  getClients,
+  getSettings,
+  saveSettings,
+  type UiCampaign,
+  type UiClient,
+} from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
 
 const statusConfig: Record<string, { color: string; bg: string }> = {
   Active: { color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
@@ -17,13 +26,145 @@ const statusConfig: Record<string, { color: string; bg: string }> = {
 const audienceOptions = ['All Clients', 'VIP Members', 'Gold & Platinum', 'Inactive 30 Days', 'New Clients'];
 
 export function MarketingPage() {
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const [showCampaignModal, setShowCampaignModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [campaignType, setCampaignType] = useState<'SMS' | 'Email'>('SMS');
+  const [sendMode, setSendMode] = useState<'Send Now' | 'Schedule'>('Send Now');
   const [audience, setAudience] = useState('All Clients');
   const [message, setMessage] = useState('');
   const [promoCode, setPromoCode] = useState('');
   const [promoDiscount, setPromoDiscount] = useState('15');
+  const [campaigns, setCampaigns] = useState<UiCampaign[]>([]);
+  const [clients, setClients] = useState<UiClient[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmittingCampaign, setIsSubmittingCampaign] = useState(false);
+  const [isSubmittingPromo, setIsSubmittingPromo] = useState(false);
+
+  const loadMarketingData = async () => {
+    setIsLoading(true);
+    try {
+      const [campaignRows, clientRows] = await Promise.all([
+        getCampaigns(activeBranchId),
+        getClients(activeBranchId),
+      ]);
+      setCampaigns(campaignRows);
+      setClients(clientRows);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Failed to load marketing data';
+      toast.error(messageText);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadMarketingData();
+  }, [activeBranchId]);
+
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(now.getDate() - 30);
+
+  const parseClientDate = (value: string) => {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+    return new Date(0);
+  };
+
+  const audienceSegments = useMemo(() => {
+    const vipMembers = clients.filter(client => String(client.membership || '').toLowerCase() !== 'none');
+    const goldAndPlatinum = clients.filter(client => {
+      const tier = String(client.loyalty || '').toLowerCase();
+      return tier === 'gold' || tier === 'platinum';
+    });
+    const inactiveThirtyDays = clients.filter(client => parseClientDate(client.lastVisit) < thirtyDaysAgo);
+    const newClientsThirtyDays = clients.filter(client => parseClientDate(client.lastVisit) >= thirtyDaysAgo);
+
+    return [
+      { label: 'All Clients', count: clients.length, icon: Users, color: '#2563EB' },
+      { label: 'VIP Members', count: vipMembers.length, icon: Zap, color: '#f59e0b' },
+      { label: 'Gold & Above', count: goldAndPlatinum.length, icon: TrendingUp, color: '#f59e0b' },
+      { label: 'Inactive 30d', count: inactiveThirtyDays.length, icon: Clock, color: '#f59e0b' },
+      { label: 'New (30d)', count: newClientsThirtyDays.length, icon: Plus, color: '#10b981' },
+    ];
+  }, [clients]);
+
+  const totalSent = campaigns.reduce((sum, campaign) => sum + campaign.sent, 0);
+  const totalOpened = campaigns.reduce((sum, campaign) => sum + campaign.opened, 0);
+  const totalConverted = campaigns.reduce((sum, campaign) => sum + campaign.converted, 0);
+  const totalRevenue = campaigns.reduce((sum, campaign) => sum + campaign.revenue, 0);
+  const openRate = totalSent > 0 ? (totalOpened / totalSent) * 100 : 0;
+  const conversionRate = totalOpened > 0 ? (totalConverted / totalOpened) * 100 : 0;
+
+  const handleLaunchCampaign = async () => {
+    if (!message.trim()) {
+      toast.error('Campaign message is required');
+      return;
+    }
+
+    setIsSubmittingCampaign(true);
+    try {
+      await createCampaign({
+        branch_id: activeBranchId,
+        name: `${campaignType} Campaign - ${audience}`,
+        type: campaignType,
+        audience,
+        message: message.trim(),
+        status: sendMode === 'Send Now' ? 'Active' : 'Scheduled',
+      });
+      await loadMarketingData();
+      setShowCampaignModal(false);
+      setMessage('');
+      setSendMode('Send Now');
+      toast.success('Campaign launched successfully');
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Failed to launch campaign';
+      toast.error(messageText);
+    } finally {
+      setIsSubmittingCampaign(false);
+    }
+  };
+
+  const handleCreatePromoCode = async () => {
+    const code = (promoCode || `LUXE${promoDiscount}`).trim().toUpperCase();
+    if (!code) {
+      toast.error('Promo code is required');
+      return;
+    }
+
+    const discount = Number(promoDiscount);
+    if (!Number.isFinite(discount) || discount <= 0 || discount > 100) {
+      toast.error('Promo discount must be between 1 and 100');
+      return;
+    }
+
+    setIsSubmittingPromo(true);
+    try {
+      const currentSettings = await getSettings(activeBranchId);
+      const existingPromos = Array.isArray(currentSettings.marketingPromos)
+        ? currentSettings.marketingPromos
+        : [];
+      const nextPromos = [
+        { code, discount, createdAt: new Date().toISOString() },
+        ...existingPromos.filter((promo: any) => String(promo.code).toUpperCase() !== code),
+      ];
+
+      await saveSettings(activeBranchId, {
+        ...currentSettings,
+        marketingPromos: nextPromos,
+      });
+
+      setShowPromoModal(false);
+      setPromoCode('');
+      toast.success(`Promo code ${code} created`);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'Failed to save promo code';
+      toast.error(messageText);
+    } finally {
+      setIsSubmittingPromo(false);
+    }
+  };
 
   return (
     <div className="p-4 lg:p-6 space-y-5 max-w-[1400px] mx-auto">
@@ -54,10 +195,10 @@ export function MarketingPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Sent', value: '412', sub: 'This month', color: '#2563EB', icon: Send },
-          { label: 'Open Rate', value: '68.4%', sub: '+12% vs last month', color: '#10b981', icon: Eye },
-          { label: 'Conversions', value: '111', sub: '26.9% rate', color: '#8b5cf6', icon: TrendingUp },
-          { label: 'Revenue Generated', value: '$8,630', sub: 'From campaigns', color: '#f59e0b', icon: BarChart2 },
+          { label: 'Total Sent', value: totalSent.toString(), sub: 'This month', color: '#2563EB', icon: Send },
+          { label: 'Open Rate', value: `${openRate.toFixed(1)}%`, sub: `${totalOpened} opens`, color: '#10b981', icon: Eye },
+          { label: 'Conversions', value: totalConverted.toString(), sub: `${conversionRate.toFixed(1)}% rate`, color: '#8b5cf6', icon: TrendingUp },
+          { label: 'Revenue Generated', value: `$${totalRevenue.toLocaleString()}`, sub: 'From campaigns', color: '#f59e0b', icon: BarChart2 },
         ].map(stat => (
           <div key={stat.label} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="flex items-center justify-between mb-2">
@@ -76,13 +217,7 @@ export function MarketingPage() {
       <div className="rounded-2xl p-5" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
         <h3 className="text-white text-sm mb-4" style={{ fontWeight: 600 }}>Audience Segments</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {[
-            { label: 'All Clients', count: '8', icon: Users, color: '#2563EB' },
-            { label: 'VIP Members', count: '2', icon: Zap, color: '#f59e0b' },
-            { label: 'Gold & Above', count: '3', icon: TrendingUp, color: '#f59e0b' },
-            { label: 'Inactive 30d', count: '2', icon: Clock, color: '#f59e0b' },
-            { label: 'New (30d)', count: '3', icon: Plus, color: '#10b981' },
-          ].map(seg => (
+          {audienceSegments.map(seg => (
             <button
               key={seg.label}
               onClick={() => { setAudience(seg.label); setShowCampaignModal(true); }}
@@ -102,11 +237,11 @@ export function MarketingPage() {
       {/* Campaigns */}
       <div>
         <h3 className="text-white text-sm mb-3" style={{ fontWeight: 600 }}>Campaigns</h3>
+        {isLoading && <div className="text-sm text-[#9ca3af] mb-2">Loading campaigns...</div>}
         <div className="space-y-3">
-          {mockCampaigns.map(campaign => {
-            const sc = statusConfig[campaign.status];
+          {campaigns.map(campaign => {
+            const sc = statusConfig[campaign.status] || statusConfig.Draft;
             const openRate = campaign.sent > 0 ? ((campaign.opened / campaign.sent) * 100).toFixed(0) : '—';
-            const convRate = campaign.opened > 0 ? ((campaign.converted / campaign.opened) * 100).toFixed(0) : '—';
             return (
               <div
                 key={campaign.id}
@@ -250,8 +385,13 @@ export function MarketingPage() {
                   {['Send Now', 'Schedule'].map(opt => (
                     <button
                       key={opt}
+                      onClick={() => setSendMode(opt as 'Send Now' | 'Schedule')}
                       className="flex items-center justify-center gap-2 py-3 rounded-xl text-sm text-[#9ca3af] hover:text-white transition-all"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                      style={{
+                        background: sendMode === opt ? 'rgba(37,99,235,0.12)' : 'rgba(255,255,255,0.04)',
+                        border: sendMode === opt ? '1px solid rgba(37,99,235,0.3)' : '1px solid rgba(255,255,255,0.06)',
+                        color: sendMode === opt ? '#2563EB' : '#9ca3af',
+                      }}
                     >
                       {opt === 'Send Now' ? <Send size={14} /> : <Clock size={14} />}
                       {opt}
@@ -261,11 +401,12 @@ export function MarketingPage() {
               </div>
 
               <button
-                onClick={() => { toast.success('Campaign launched successfully'); setShowCampaignModal(false); }}
-                className="w-full flex items-center justify-center gap-2 py-3.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all"
+                onClick={handleLaunchCampaign}
+                disabled={isSubmittingCampaign}
+                className="w-full flex items-center justify-center gap-2 py-3.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all disabled:opacity-60"
                 style={{ fontWeight: 600 }}
               >
-                <Send size={15} /> Launch Campaign
+                <Send size={15} /> {isSubmittingCampaign ? 'Launching...' : 'Launch Campaign'}
               </button>
             </div>
           </div>
@@ -312,11 +453,12 @@ export function MarketingPage() {
                 </div>
               </div>
               <button
-                onClick={() => { toast.success(`Promo code ${promoCode || 'LUXE' + promoDiscount} created`); setShowPromoModal(false); }}
-                className="w-full py-3.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all"
+                onClick={handleCreatePromoCode}
+                disabled={isSubmittingPromo}
+                className="w-full py-3.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all disabled:opacity-60"
                 style={{ fontWeight: 600 }}
               >
-                Create Promo Code
+                {isSubmittingPromo ? 'Creating...' : 'Create Promo Code'}
               </button>
             </div>
           </div>

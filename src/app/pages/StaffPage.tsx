@@ -1,13 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { StaffForm, StaffFormValues } from "../components/forms/StaffForm";
 import { DataTable, ColumnDef } from "../components/ui/data-table";
 import { Modal } from "../components/ui/modal";
 import { Button } from "../components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { mockStaff } from "../data/mockData";
 import { useAuthStore } from "../store/useAuthStore";
 import { useBranchStore } from "../store/useBranchStore";
+import {
+  createStaff as createStaffRecord,
+  deleteStaff as deleteStaffRecord,
+  getStaff,
+  type UiStaff,
+  updateStaff as updateStaffRecord,
+} from "../lib/supabaseData";
 
 const ROLES = ['Admin', 'Manager', 'Receptionist', 'Barber'];
 
@@ -29,24 +35,36 @@ export const StaffPage = () => {
   const [activeTab, setActiveTab] = useState<'team' | 'roles'>('team');
   const [selectedRole, setSelectedRole] = useState('Manager');
 
-  const { rolePermissions: permissions, updateRolePermission } = useAuthStore();
+  const { rolePermissions: permissions, updateRolePermission, loadRolePermissions } = useAuthStore();
   const activeBranchId = useBranchStore(state => state.activeBranchId);
-  const branches = useBranchStore(state => state.branches);
 
-  const [staff, setStaff] = useState(mockStaff.map((s, i) => ({
-    ...s, 
-    fullName: s.name, 
-    role: s.role.toLowerCase().includes("admin") ? "admin" : "barber",
-    commissionPercent: s.commission,
-    branchId: branches[i % branches.length]?.id || 'branch-1'
-  })));
+  const [staff, setStaff] = useState<UiStaff[]>([]);
+  const [isLoadingStaff, setIsLoadingStaff] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedStaff, setSelectedStaff] = useState<any>(null);
+  const [selectedStaff, setSelectedStaff] = useState<UiStaff | null>(null);
+
+  const loadStaff = async () => {
+    setIsLoadingStaff(true);
+    try {
+      const rows = await getStaff(activeBranchId);
+      setStaff(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load staff';
+      toast.error(message);
+    } finally {
+      setIsLoadingStaff(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadStaff();
+  }, [activeBranchId]);
 
   const filteredStaff = staff.filter(s => s.branchId === activeBranchId);
 
-  const columns: ColumnDef<any>[] = [
+  const columns: ColumnDef<UiStaff>[] = [
     { id: "fullName", header: "Name", accessorKey: "fullName", sortable: true },
     { id: "email", header: "Email", accessorKey: "email" },
     { id: "phone", header: "Phone", accessorKey: "phone" },
@@ -73,28 +91,60 @@ export const StaffPage = () => {
     },
   ];
 
-  const handleCreateOrUpdate = (data: StaffFormValues) => {
-    if (selectedStaff) {
-      setStaff(prev => prev.map(s => s.id === selectedStaff.id ? { ...data, id: s.id } : s));
-      toast.success("Staff member updated");
-    } else {
-      setStaff(prev => [...prev, { ...data, id: Math.random().toString(36).substring(7) }]);
-      toast.success("Staff member created");
+  const handleCreateOrUpdate = async (data: StaffFormValues) => {
+    setIsSubmitting(true);
+    try {
+      if (selectedStaff) {
+        await updateStaffRecord(selectedStaff.id, {
+          fullName: data.fullName,
+          name: data.fullName,
+          email: data.email,
+          phone: data.phone,
+          role: data.role,
+          commissionPercent: data.commissionPercent || 0,
+          commission: data.commissionPercent || 0,
+          branchId: data.branchId || activeBranchId,
+        });
+        toast.success("Staff member updated");
+      } else {
+        await createStaffRecord({
+          fullName: data.fullName,
+          email: data.email,
+          phone: data.phone,
+          role: data.role,
+          commissionPercent: data.commissionPercent,
+          branchId: data.branchId || activeBranchId,
+        });
+        toast.success("Staff member created");
+      }
+      await loadStaff();
+      setIsModalOpen(false);
+      setSelectedStaff(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save staff member';
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsModalOpen(false);
   };
 
-  const openEdit = (staffMember: any) => {
+  const openEdit = (staffMember: UiStaff) => {
     setSelectedStaff(staffMember);
     setIsModalOpen(true);
   };
 
-  const deleteStaff = (id: string) => {
-    setStaff(prev => prev.filter(s => s.id !== id));
-    toast.success("Staff member removed");
+  const deleteStaff = async (id: string) => {
+    try {
+      await deleteStaffRecord(id);
+      await loadStaff();
+      toast.success("Staff member removed");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove staff member';
+      toast.error(message);
+    }
   };
 
-  const ActionCell = (row: any) => (
+  const ActionCell = (row: UiStaff) => (
     <div className="flex items-center gap-2">
       <button onClick={() => openEdit(row)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
         <Pencil className="w-4 h-4" />
@@ -111,7 +161,8 @@ const handlePermissionToggle = (permId: string) => {
       return;
     }
     
-    updateRolePermission(selectedRole, permId, !permissions[selectedRole][permId]);
+    const currentValue = permissions[selectedRole]?.[permId] || false;
+    updateRolePermission(selectedRole, permId, !currentValue);
   };
 
   return (
@@ -152,6 +203,9 @@ const handlePermissionToggle = (permId: string) => {
       <div className="flex-1 overflow-y-auto min-h-0">
         {activeTab === 'team' ? (
           <div className="bg-[#1a1a1a] rounded-2xl border border-white/[0.05] p-1 staff-table">
+            {isLoadingStaff && (
+              <div className="text-[#9ca3af] text-sm px-4 py-3">Loading staff...</div>
+            )}
             <DataTable
               columns={columns}
               data={filteredStaff} 
@@ -188,7 +242,10 @@ const handlePermissionToggle = (permId: string) => {
             <div className="flex-1 bg-[#1a1a1a] rounded-2xl border border-white/[0.05] flex flex-col min-h-0">
               <div className="p-5 border-b border-white/[0.05] flex items-center justify-between sticky top-0 bg-[#1a1a1a] rounded-t-2xl z-10">
                 <h2 className="text-white font-bold">Permissions for: {selectedRole}</h2>
-                <Button onClick={() => toast.success(`Permissions saved for ${selectedRole}`)} className="bg-[#2563EB] hover:bg-[#1d4ed8] h-9 text-sm rounded-xl">
+                <Button onClick={async () => {
+                  await loadRolePermissions();
+                  toast.success(`Permissions synced for ${selectedRole}`);
+                }} className="bg-[#2563EB] hover:bg-[#1d4ed8] h-9 text-sm rounded-xl">
                   Save Changes
                 </Button>
               </div>
@@ -228,7 +285,8 @@ const handlePermissionToggle = (permId: string) => {
       >
         <StaffForm 
           initialData={selectedStaff} 
-          onSubmit={handleCreateOrUpdate} 
+          onSubmit={handleCreateOrUpdate}
+          isLoading={isSubmitting}
         />
       </Modal>
     </div>

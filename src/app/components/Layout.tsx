@@ -39,7 +39,7 @@ const mobileNavItems = [
 ];
 
 export function Layout() {
-  const { hasPermission, user } = useAuthStore();
+  const { hasPermission, user, logout } = useAuthStore();
   const { branches, activeBranchId, setActiveBranch } = useBranchStore();
   const { mode, setMode } = useThemeStore();
   const location = useLocation();
@@ -58,6 +58,25 @@ export function Layout() {
     { id: 3, text: 'Caleb Rogers marked as no-show', type: 'error', time: '25m ago' },
     { id: 4, text: 'Daily revenue target reached: $2,340', type: 'success', time: '1h ago' },
   ];
+
+  const userInitials = user?.fullName
+    ? user.fullName
+        .split(' ')
+        .map(part => part[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase()
+    : 'US';
+
+  const roleLabel = user?.role
+    ? `${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
+    : 'User';
+
+  const handleSignOut = async () => {
+    await logout();
+    toast.success('Logged out successfully');
+    navigate('/login');
+  };
 
   return (
     <div className="flex h-dvh bg-[#111111] overflow-hidden">
@@ -129,7 +148,9 @@ export function Layout() {
             />
           </div>
           <button
-            onClick={() => { toast.success('Logged out successfully'); navigate('/login'); }}
+            onClick={() => {
+              void handleSignOut();
+            }}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#6b7280] hover:bg-white/[0.04] hover:text-white transition-all"
           >
             <LogOut size={18} strokeWidth={1.5} />
@@ -286,19 +307,19 @@ export function Layout() {
                 className="flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-xl bg-[#1a1a1a] border border-white/[0.06] hover:bg-[#222222] transition-all"
               >
                 <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#2563EB] to-[#7c3aed] flex items-center justify-center text-white text-xs" style={{ fontWeight: 700 }}>
-                  AD
+                  {userInitials}
                 </div>
                 <div className="hidden md:block text-left">
-                  <div className="text-xs text-white" style={{ fontWeight: 600 }}>Admin User</div>
-                  <div className="text-[10px] text-[#4b5563]">Owner</div>
+                  <div className="text-xs text-white" style={{ fontWeight: 600 }}>{user?.fullName || 'User'}</div>
+                  <div className="text-[10px] text-[#4b5563]">{roleLabel}</div>
                 </div>
                 <ChevronDown size={14} className="text-[#4b5563] hidden md:block" />
               </button>
               {showProfile && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-[#1a1a1a] border border-white/[0.08] rounded-xl overflow-hidden z-50 shadow-2xl">
                   <div className="px-4 py-3 border-b border-white/[0.06]">
-                    <div className="text-sm text-white" style={{ fontWeight: 600 }}>Admin User</div>
-                    <div className="text-xs text-[#6b7280]">admin@luxecut.com</div>
+                    <div className="text-sm text-white" style={{ fontWeight: 600 }}>{user?.fullName || 'User'}</div>
+                    <div className="text-xs text-[#6b7280]">{user?.email || 'No email'}</div>
                   </div>
                   {['Profile Settings', 'Billing', 'Help & Support'].map(item => (
                     <button 
@@ -314,7 +335,9 @@ export function Layout() {
                   ))}
                   <div className="border-t border-white/[0.06]">
                     <button
-                      onClick={() => navigate('/login')}
+                      onClick={() => {
+                        void handleSignOut();
+                      }}
                       className="w-full text-left px-4 py-2.5 text-sm text-[#ef4444] hover:bg-[#ef4444]/10 transition-all"
                     >
                       Sign Out

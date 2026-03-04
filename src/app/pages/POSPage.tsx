@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Search, Plus, Minus, X, ChevronDown, CreditCard,
   Banknote, Zap, Gift, Scissors, Package, Percent,
@@ -6,10 +6,24 @@ import {
   Receipt
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { mockServices, mockProducts } from '../data/mockData';
 import { ThermalReceipt } from '../components/pos/ThermalReceipt';
 import { runPrintJob } from '../lib/printUtils';
 import { useSettingsStore } from '../store/useSettingsStore';
+import {
+  createSale,
+  getClients,
+  getSettings,
+  getProducts,
+  getSales,
+  getServices,
+  processRefund,
+  saveSettings,
+  type UiClient,
+  type UiInvoice,
+  type UiProduct,
+  type UiService,
+} from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
 
 type CartItem = { id: string; name: string; price: number; qty: number; type: 'service' | 'product' };
 type PayMethod = 'cash' | 'card' | 'tap' | 'gift' | null;
@@ -18,8 +32,14 @@ const tipOptions = [10, 15, 20, 25];
 const discountOptions = [5, 10, 15, 20];
 
 export function POSPage() {
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const { businessInfo, receiptSettings } = useSettingsStore();
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [clients, setClients] = useState<UiClient[]>([]);
+  const [services, setServices] = useState<UiService[]>([]);
+  const [products, setProducts] = useState<UiProduct[]>([]);
+  const [recentSales, setRecentSales] = useState<UiInvoice[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'services' | 'products'>('services');
   const [searchQ, setSearchQ] = useState('');
   const [tip, setTip] = useState<number | 'custom' | null>(null);
@@ -39,7 +59,32 @@ export function POSPage() {
   const serviceCategories = ['All', 'Haircut', 'Beard', 'Combo', 'Shave', 'Treatment'];
   const productCategories = ['All', 'Styling', 'Beard Care', 'Hair Care', 'Shave', 'Treatment'];
 
-  const items = activeTab === 'services' ? mockServices : mockProducts;
+  const loadPOSData = async () => {
+    setIsLoading(true);
+    try {
+      const [clientRows, serviceRows, productRows, salesRows] = await Promise.all([
+        getClients(activeBranchId),
+        getServices(activeBranchId),
+        getProducts(activeBranchId),
+        getSales(activeBranchId, 15),
+      ]);
+      setClients(clientRows);
+      setServices(serviceRows);
+      setProducts(productRows);
+      setRecentSales(salesRows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load POS data';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadPOSData();
+  }, [activeBranchId]);
+
+  const items = activeTab === 'services' ? services : products;
   const filteredItems = items.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQ.toLowerCase());
     const matchesCat = categoryFilter === 'All' || item.category === categoryFilter;
@@ -52,6 +97,8 @@ export function POSPage() {
   const tipAmt = tip === 'custom' ? parseFloat(customTip) || 0 : tip ? (afterDiscount * tip) / 100 : 0;
   const total = afterDiscount + tipAmt;
   const changeDue = cashAmount ? Math.max(0, parseFloat(cashAmount) - total) : 0;
+  const latestSaleTotal = lastOrderInfo?.total || recentSales[0]?.total || total;
+  const latestSaleServiceAmount = lastOrderInfo?.subtotal || recentSales[0]?.total || total;
 
   const addToCart = (item: any) => {
     setCart(prev => {
@@ -73,22 +120,56 @@ export function POSPage() {
   };
 
   const handlePayConfirm = async () => {
-    await new Promise(r => setTimeout(r, 800));
-    setPaySuccess(true);
-    toast.success(`Payment of $${total.toFixed(2)} processed successfully`);
-    
-    // Save for receipt
-    setLastOrderInfo({
-      invoiceNumber: `INV-${Math.floor(Math.random() * 1000000)}`,
-      date: new Date(),
-      items: cart.map(c => ({ name: c.name, quantity: c.qty, price: c.price, total: c.price * c.qty })),
-      subtotal,
-      tax: 0, 
-      discount: discountAmt,
-      tip: tipAmt,
-      total,
-      paymentMethod: payMethod || 'cash'
-    });
+    if (payMethod === 'cash' && cashAmount && parseFloat(cashAmount) < total) {
+      toast.error('Cash amount is lower than total due');
+      return;
+    }
+
+    const selectedClientRow = clients.find(client => client.id === selectedClient);
+    const normalizedPayMethod = payMethod === 'gift' ? 'giftcard' : (payMethod || 'cash');
+
+    try {
+      const createdSale = await createSale({
+        branch_id: activeBranchId,
+        client_id: selectedClientRow?.id,
+        customerName: selectedClientRow?.name || 'Walk-in',
+        customerPhone: selectedClientRow?.phone || '',
+        payment_method: normalizedPayMethod,
+        subtotal,
+        discount: discountAmt,
+        tax: 0,
+        tip: tipAmt,
+        total,
+        items: cart.map(item => ({
+          item_id: item.id,
+          item_type: item.type,
+          item_name: item.name,
+          quantity: item.qty,
+          price: item.price,
+        })),
+      });
+
+      setPaySuccess(true);
+      toast.success(`Payment of $${total.toFixed(2)} processed successfully`);
+
+      setLastOrderInfo({
+        saleId: createdSale.id,
+        invoiceNumber: createdSale.invoiceNumber,
+        date: new Date(createdSale.date),
+        items: cart.map(c => ({ name: c.name, quantity: c.qty, price: c.price, total: c.price * c.qty })),
+        subtotal,
+        tax: 0,
+        discount: discountAmt,
+        tip: tipAmt,
+        total,
+        paymentMethod: payMethod || 'cash',
+      });
+
+      await loadPOSData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to process payment';
+      toast.error(message);
+    }
   };
 
   const finishSale = () => {
@@ -99,7 +180,29 @@ export function POSPage() {
     setDiscount(null);
     setPayMethod(null);
     setCashAmount('');
-    setLastOrderInfo(null);
+    setSelectedClient('');
+  };
+
+  const handleRefund = async (amount: number, label: string) => {
+    const targetSaleId = lastOrderInfo?.saleId || recentSales[0]?.id;
+    if (!targetSaleId) {
+      toast.error('No recent sale available for refund');
+      return;
+    }
+
+    try {
+      await processRefund({
+        sale_id: targetSaleId,
+        amount,
+        reason: label,
+      });
+      setShowRefundModal(false);
+      toast.success(`${label} processed`);
+      await loadPOSData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to process refund';
+      toast.error(message);
+    }
   };
 
   return (
@@ -162,8 +265,8 @@ export function POSPage() {
               style={{ color: selectedClient ? '#fff' : '#4b5563' }}
             >
               <option value="">Walk-in / Select Client</option>
-              {['Marcus Williams', 'DeShawn Carter', 'Tyler Johnson', 'Jordan Mitchell', 'Elijah Washington'].map(c => (
-                <option key={c} value={c}>{c}</option>
+              {clients.map(client => (
+                <option key={client.id} value={client.id}>{client.name} · {client.phone}</option>
               ))}
             </select>
           </div>
@@ -171,6 +274,7 @@ export function POSPage() {
 
         {/* Items Grid */}
         <div className="flex-1 overflow-y-auto p-4">
+          {isLoading && <div className="text-sm text-[#9ca3af] mb-3">Loading catalog...</div>}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filteredItems.map(item => {
               const inCart = cart.find(c => c.id === item.id);
@@ -305,7 +409,21 @@ export function POSPage() {
                       {d}% off
                     </button>
                   ))}
-                  <button onClick={() => toast.info('Discount code feature coming soon')} className="px-3 py-1.5 rounded-xl text-xs text-[#6b7280] transition-all" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <button
+                    onClick={() => {
+                      const input = prompt('Enter discount percentage (1-90):');
+                      if (!input) return;
+                      const percent = Number(input);
+                      if (!Number.isFinite(percent) || percent < 1 || percent > 90) {
+                        toast.error('Invalid discount percentage');
+                        return;
+                      }
+                      setDiscount(percent);
+                      toast.success(`Applied ${percent}% discount`);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs text-[#6b7280] transition-all"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
                     Code
                   </button>
                 </div>
@@ -519,7 +637,35 @@ export function POSPage() {
                   </button>
 
                   <div className="flex gap-2">
-                    <button onClick={() => toast.success('Card saved to customer profile')} className="flex-1 py-2.5 rounded-xl border text-xs text-[#9ca3af] hover:bg-white/[0.04] transition-all" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <button
+                      onClick={async () => {
+                        if (!selectedClient) {
+                          toast.error('Select a client before saving card');
+                          return;
+                        }
+
+                        try {
+                          const settings = await getSettings(activeBranchId);
+                          const cardsByClient = (settings?.savedCardsByClient || {}) as Record<string, Array<{ method: string; savedAt: string }>>;
+                          const existing = Array.isArray(cardsByClient[selectedClient]) ? cardsByClient[selectedClient] : [];
+                          cardsByClient[selectedClient] = [
+                            { method: payMethod || 'card', savedAt: new Date().toISOString() },
+                            ...existing,
+                          ];
+
+                          await saveSettings(activeBranchId, {
+                            ...(settings || {}),
+                            savedCardsByClient: cardsByClient,
+                          });
+                          toast.success('Card saved to customer profile');
+                        } catch (error) {
+                          const message = error instanceof Error ? error.message : 'Failed to save card';
+                          toast.error(message);
+                        }
+                      }}
+                      className="flex-1 py-2.5 rounded-xl border text-xs text-[#9ca3af] hover:bg-white/[0.04] transition-all"
+                      style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                    >
                       Save Card on File
                     </button>
                     <button onClick={() => { runPrintJob(); toast.info('Printing receipt...'); }} className="flex-1 py-2.5 rounded-xl border text-xs text-[#9ca3af] hover:bg-white/[0.04] transition-all" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -564,7 +710,12 @@ export function POSPage() {
                 ))}
               </div>
               <button
-                onClick={() => { setShowSplitModal(false); toast.success('Split payment initiated'); }}
+                onClick={() => {
+                  setShowSplitModal(false);
+                  setPayMethod('card');
+                  setShowPayModal(true);
+                  toast.success('Split payment configured');
+                }}
                 className="w-full py-3.5 rounded-2xl text-white text-sm transition-all"
                 style={{ background: 'linear-gradient(135deg, #2563EB, #1d4ed8)', fontWeight: 700 }}
               >
@@ -589,13 +740,13 @@ export function POSPage() {
                 <p className="text-xs text-[#ef4444]">Refunds will be processed back to the original payment method within 3-5 business days.</p>
               </div>
               {[
-                { label: 'Full Refund', amount: total.toFixed(2) },
-                { label: 'Service Only', amount: (subtotal - discountAmt).toFixed(2) },
-                { label: 'Partial Refund', amount: '' },
+                { label: 'Full Refund', amount: latestSaleTotal.toFixed(2), numericAmount: latestSaleTotal },
+                { label: 'Service Only', amount: latestSaleServiceAmount.toFixed(2), numericAmount: latestSaleServiceAmount },
+                { label: 'Partial Refund', amount: '', numericAmount: latestSaleTotal / 2 },
               ].map(opt => (
                 <button
                   key={opt.label}
-                  onClick={() => { setShowRefundModal(false); toast.success(`${opt.label} processed`); }}
+                  onClick={() => void handleRefund(opt.numericAmount, opt.label)}
                   className="w-full flex items-center justify-between p-4 rounded-xl hover:bg-white/[0.04] transition-all"
                   style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
                 >

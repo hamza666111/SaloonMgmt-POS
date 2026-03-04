@@ -1,10 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Search, Plus, AlertTriangle, Package, Filter,
   X, TrendingDown, TrendingUp, ChevronDown, Edit3
 } from 'lucide-react';
-import { mockProducts } from '../data/mockData';
 import { toast } from 'sonner';
+import {
+  adjustProductStock,
+  createProduct as createProductRecord,
+  getProducts,
+  updateProduct as updateProductRecord,
+  type UiProduct,
+} from '../lib/supabaseData';
+import { useBranchStore } from '../store/useBranchStore';
 
 const categoryColors: Record<string, { color: string; bg: string }> = {
   Styling: { color: '#2563EB', bg: 'rgba(37,99,235,0.1)' },
@@ -15,23 +22,110 @@ const categoryColors: Record<string, { color: string; bg: string }> = {
 };
 
 export function InventoryPage() {
+  const activeBranchId = useBranchStore(state => state.activeBranchId);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', price: '', stock: '', category: 'Styling', supplier: '' });
-  const [editProduct, setEditProduct] = useState<any>(null);
+  const [editProduct, setEditProduct] = useState<UiProduct | null>(null);
+  const [products, setProducts] = useState<UiProduct[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const categories = ['All', 'Styling', 'Beard Care', 'Hair Care', 'Shave', 'Treatment'];
-  const lowStockItems = mockProducts.filter(p => p.stock <= p.reorderLevel);
 
-  const filtered = mockProducts.filter(p => {
+  const loadProducts = async () => {
+    setIsLoading(true);
+    try {
+      const rows = await getProducts(activeBranchId);
+      setProducts(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load products';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadProducts();
+  }, [activeBranchId]);
+
+  const lowStockItems = products.filter(p => p.stock <= p.reorderLevel);
+
+  const filtered = products.filter(p => {
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.sku.toLowerCase().includes(search.toLowerCase());
     const matchCat = categoryFilter === 'All' || p.category === categoryFilter;
     const matchLow = !showLowStockOnly || p.stock <= p.reorderLevel;
     return matchSearch && matchCat && matchLow;
   });
+
+  const openCreateModal = () => {
+    setEditProduct(null);
+    setNewProduct({ name: '', price: '', stock: '', category: 'Styling', supplier: '' });
+    setShowAddModal(true);
+  };
+
+  const openEditModal = (product: UiProduct) => {
+    setEditProduct(product);
+    setNewProduct({
+      name: product.name,
+      price: String(product.price),
+      stock: String(product.stock),
+      category: product.category,
+      supplier: product.supplier || '',
+    });
+    setShowAddModal(true);
+  };
+
+  const handleSaveProduct = async () => {
+    if (!newProduct.name.trim()) {
+      toast.error('Product name is required');
+      return;
+    }
+
+    if (!newProduct.price || Number(newProduct.price) < 0) {
+      toast.error('Valid price is required');
+      return;
+    }
+
+    if (!newProduct.stock || Number(newProduct.stock) < 0) {
+      toast.error('Valid stock quantity is required');
+      return;
+    }
+
+    try {
+      if (editProduct) {
+        await updateProductRecord(editProduct.id, {
+          name: newProduct.name.trim(),
+          price: Number(newProduct.price),
+          stock: Number(newProduct.stock),
+          category: newProduct.category,
+          supplier: newProduct.supplier,
+        });
+        toast.success('Product updated');
+      } else {
+        await createProductRecord({
+          name: newProduct.name.trim(),
+          price: newProduct.price,
+          stock: newProduct.stock,
+          category: newProduct.category,
+          supplier: newProduct.supplier,
+          branchId: activeBranchId,
+        });
+        toast.success('Product added to inventory');
+      }
+
+      setShowAddModal(false);
+      setEditProduct(null);
+      setNewProduct({ name: '', price: '', stock: '', category: 'Styling', supplier: '' });
+      await loadProducts();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save product';
+      toast.error(message);
+    }
+  };
 
   const getStockStatus = (stock: number, reorderLevel: number) => {
     if (stock === 0) return { label: 'Out of Stock', color: '#ef4444', bg: 'rgba(239,68,68,0.1)' };
@@ -46,10 +140,10 @@ export function InventoryPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-white text-xl" style={{ fontWeight: 700 }}>Inventory</h1>
-          <p className="text-[#6b7280] text-sm mt-0.5">{mockProducts.length} products · {lowStockItems.length} need restocking</p>
+          <p className="text-[#6b7280] text-sm mt-0.5">{products.length} products · {lowStockItems.length} need restocking</p>
         </div>
         <button
-          onClick={() => setShowAddModal(true)}
+          onClick={openCreateModal}
           className="flex items-center gap-2 px-4 py-2.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all"
           style={{ fontWeight: 600 }}
         >
@@ -60,10 +154,10 @@ export function InventoryPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Products', value: mockProducts.length.toString(), sub: 'In catalog', color: '#2563EB' },
+          { label: 'Total Products', value: products.length.toString(), sub: 'In catalog', color: '#2563EB' },
           { label: 'Low Stock', value: lowStockItems.length.toString(), sub: 'Need reorder', color: '#f59e0b' },
-          { label: 'Total Value', value: `$${mockProducts.reduce((s, p) => s + p.price * p.stock, 0).toLocaleString()}`, sub: 'Stock value', color: '#10b981' },
-          { label: 'Out of Stock', value: '0', sub: 'Items', color: '#ef4444' },
+          { label: 'Total Value', value: `$${products.reduce((s, p) => s + p.price * p.stock, 0).toLocaleString()}`, sub: 'Stock value', color: '#10b981' },
+          { label: 'Out of Stock', value: `${products.filter(product => product.stock === 0).length}`, sub: 'Items', color: '#ef4444' },
         ].map(stat => (
           <div key={stat.label} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="text-xl mb-0.5" style={{ color: stat.color, fontWeight: 700 }}>{stat.value}</div>
@@ -88,7 +182,13 @@ export function InventoryPage() {
             </div>
           </div>
           <button
-            onClick={() => toast.success('Reorder list sent to supplier')}
+            onClick={async () => {
+              for (const item of lowStockItems) {
+                await adjustProductStock(item.id, Math.max(item.reorderLevel, 5));
+              }
+              toast.success('Reorder list sent to supplier');
+              await loadProducts();
+            }}
             className="flex-shrink-0 px-3 py-1.5 rounded-xl text-xs text-[#f59e0b] transition-all"
             style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', fontWeight: 600 }}
           >
@@ -136,6 +236,9 @@ export function InventoryPage() {
       </div>
 
       {/* Product Grid */}
+      {isLoading && (
+        <div className="text-center text-[#6b7280] text-sm py-8">Loading inventory...</div>
+      )}
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
         {filtered.map(product => {
           const catConfig = categoryColors[product.category] || { color: '#9ca3af', bg: 'rgba(156,163,175,0.1)' };
@@ -159,7 +262,7 @@ export function InventoryPage() {
                   </div>
                 </div>
                 <button
-                  onClick={() => setEditProduct(product)}
+                  onClick={() => openEditModal(product)}
                   className="text-[#4b5563] hover:text-white transition-colors flex-shrink-0"
                 >
                   <Edit3 size={14} />
@@ -198,14 +301,18 @@ export function InventoryPage() {
 
               <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                 <button
-                  onClick={() => toast.success(`Reorder placed for ${product.name}`)}
+                  onClick={async () => {
+                    await adjustProductStock(product.id, Math.max(product.reorderLevel, 5));
+                    toast.success(`Reorder placed for ${product.name}`);
+                    await loadProducts();
+                  }}
                   className="flex-1 py-2 rounded-xl text-xs transition-all"
                   style={{ background: 'rgba(37,99,235,0.08)', color: '#2563EB', border: '1px solid rgba(37,99,235,0.2)', fontWeight: 600 }}
                 >
                   Reorder
                 </button>
                 <button
-                  onClick={() => toast.success(`Stock adjusted for ${product.name}`)}
+                  onClick={() => openEditModal(product)}
                   className="flex-1 py-2 rounded-xl text-xs text-[#9ca3af] hover:text-white transition-all"
                   style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
                 >
@@ -223,7 +330,7 @@ export function InventoryPage() {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAddModal(false)} />
           <div className="relative w-full max-w-md rounded-2xl z-10 overflow-hidden" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              <h3 className="text-white text-base" style={{ fontWeight: 700 }}>Add New Product</h3>
+              <h3 className="text-white text-base" style={{ fontWeight: 700 }}>{editProduct ? 'Edit Product' : 'Add New Product'}</h3>
               <button onClick={() => setShowAddModal(false)} className="text-[#6b7280] hover:text-white"><X size={18} /></button>
             </div>
             <div className="p-5 space-y-4">
@@ -255,11 +362,11 @@ export function InventoryPage() {
                 </select>
               </div>
               <button
-                onClick={() => { toast.success('Product added to inventory'); setShowAddModal(false); }}
+                onClick={handleSaveProduct}
                 className="w-full py-3.5 bg-[#2563EB] hover:bg-[#1d4ed8] text-white rounded-xl text-sm transition-all"
                 style={{ fontWeight: 600 }}
               >
-                Add Product
+                {editProduct ? 'Update Product' : 'Add Product'}
               </button>
             </div>
           </div>

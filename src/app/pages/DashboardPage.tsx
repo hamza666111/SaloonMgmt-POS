@@ -1,24 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   TrendingUp, TrendingDown, Calendar, Users, DollarSign,
-  AlertTriangle, Clock, ChevronRight, MoreHorizontal,
-  ArrowUpRight, Scissors, ShoppingBag, XCircle
+  AlertTriangle, Clock, ChevronRight,
+  ShoppingBag, XCircle
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import { revenueData, servicePopularityData, mockAppointments, mockProducts } from '../data/mockData';
 import { useBranchStore } from '../store/useBranchStore';
-
-const kpiCards = [
-  { label: "Today's Revenue", value: '$2,340', change: '+18.2%', up: true, icon: DollarSign, color: '#2563EB' },
-  { label: 'Appointments Today', value: '24', change: '+4 vs yesterday', up: true, icon: Calendar, color: '#8b5cf6' },
-  { label: 'Walk-ins Waiting', value: '3', change: 'Avg wait: 12 min', up: null, icon: Clock, color: '#f59e0b' },
-  { label: 'This Week Revenue', value: '$12,330', change: '+12.4%', up: true, icon: TrendingUp, color: '#10b981' },
-  { label: 'No-show Rate', value: '4.2%', change: '-1.1% vs last week', up: false, icon: XCircle, color: '#ef4444' },
-];
+import { getDashboardData, type DashboardStats, type UiAppointment, type UiProduct } from '../lib/supabaseData';
+import { useAuthStore } from '../store/useAuthStore';
+import { toast } from 'sonner';
 
 const statusColors: Record<string, string> = {
   confirmed: '#2563EB',
@@ -42,27 +36,73 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const [revenueView] = useState('week');
+  const [revenueView, setRevenueView] = useState('week');
+  const [isLoading, setIsLoading] = useState(false);
+  const [stats, setStats] = useState<DashboardStats>({
+    todayRevenue: 0,
+    todayAppointments: 0,
+    walkInsWaiting: 0,
+    weekRevenue: 0,
+    noShowRate: 0,
+  });
+  const [revenueSeries, setRevenueSeries] = useState<Array<{ day: string; revenue: number; appointments: number }>>([]);
+  const [serviceBreakdown, setServiceBreakdown] = useState<Array<{ name: string; value: number; color: string }>>([]);
+  const [todayAppts, setTodayAppts] = useState<UiAppointment[]>([]);
+  const [lowStock, setLowStock] = useState<UiProduct[]>([]);
   
   const activeBranchId = useBranchStore(state => state.activeBranchId);
   const branches = useBranchStore(state => state.branches);
-  const barbers = ['Jordan Blake', 'Alex Torres', 'Sam Rivera', 'Chris Morgan'];
-  const activeBarbers = barbers.filter((b, i) => {
-    const assignedBranchId = branches[i % Math.max(1, branches.length)]?.id || activeBranchId;
-    return assignedBranchId === activeBranchId;
-  });
+  const user = useAuthStore(state => state.user);
 
-  const lowStock = mockProducts.filter(p => p.stock <= p.reorderLevel);
-  const filteredAppointments = mockAppointments.filter(a => activeBarbers.includes(a.barber));
-  const todayAppts = filteredAppointments.slice(0, 6);
+  const activeBranchName = branches.find(branch => branch.id === activeBranchId)?.name || 'Main Branch';
+
+  const loadDashboard = async () => {
+    setIsLoading(true);
+    try {
+      const data = await getDashboardData(activeBranchId);
+      setStats(data.stats);
+      setRevenueSeries(data.revenueSeries);
+      setServiceBreakdown(data.serviceBreakdown);
+      setTodayAppts(data.todayAppointments.slice(0, 6));
+      setLowStock(data.lowStock);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load dashboard';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [activeBranchId]);
+
+  const averageRevenue = revenueSeries.length > 0
+    ? revenueSeries.reduce((sum, point) => sum + point.revenue, 0) / revenueSeries.length
+    : 0;
+
+  const bestRevenueDay = useMemo(() => {
+    if (revenueSeries.length === 0) return '—';
+    return revenueSeries.reduce((best, current) => (current.revenue > best.revenue ? current : best)).day;
+  }, [revenueSeries]);
+
+  const totalAppointmentsWeek = revenueSeries.reduce((sum, point) => sum + point.appointments, 0);
+
+  const kpiCards = [
+    { label: "Today's Revenue", value: `$${stats.todayRevenue.toLocaleString()}`, change: 'Live', up: true, icon: DollarSign, color: '#2563EB' },
+    { label: 'Appointments Today', value: `${stats.todayAppointments}`, change: 'Today', up: true, icon: Calendar, color: '#8b5cf6' },
+    { label: 'Walk-ins Waiting', value: `${stats.walkInsWaiting}`, change: 'Current queue', up: null, icon: Clock, color: '#f59e0b' },
+    { label: 'This Week Revenue', value: `$${stats.weekRevenue.toLocaleString()}`, change: 'Last 7 days', up: true, icon: TrendingUp, color: '#10b981' },
+    { label: 'No-show Rate', value: `${stats.noShowRate}%`, change: 'This week', up: false, icon: XCircle, color: '#ef4444' },
+  ];
 
   return (
     <div className="p-4 lg:p-6 space-y-6 max-w-[1400px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-white text-xl" style={{ fontWeight: 700, letterSpacing: '-0.3px' }}>Good morning, Admin</h1>
-          <p className="text-[#6b7280] text-sm mt-0.5">Tuesday, March 3, 2026 · Downtown Branch</p>
+          <h1 className="text-white text-xl" style={{ fontWeight: 700, letterSpacing: '-0.3px' }}>Good morning, {user?.fullName || 'Team'}</h1>
+          <p className="text-[#6b7280] text-sm mt-0.5">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · {activeBranchName}</p>
         </div>
         <button
           onClick={() => navigate('/appointments')}
@@ -75,6 +115,7 @@ export function DashboardPage() {
       </div>
 
       {/* KPI Cards */}
+      {isLoading && <div className="text-sm text-[#9ca3af]">Loading dashboard...</div>}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {kpiCards.map((card, i) => (
           <div key={i} className="p-4 rounded-2xl relative overflow-hidden" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
@@ -110,7 +151,10 @@ export function DashboardPage() {
             </div>
             <div className="flex items-center gap-1 p-1 rounded-lg" style={{ background: '#111111' }}>
               {['Week', 'Month'].map(v => (
-                <button key={v} className={`px-3 py-1.5 rounded-lg text-xs transition-all ${revenueView === v.toLowerCase() ? 'bg-[#2563EB] text-white' : 'text-[#6b7280] hover:text-white'}`}
+                <button
+                  key={v}
+                  onClick={() => setRevenueView(v.toLowerCase())}
+                  className={`px-3 py-1.5 rounded-lg text-xs transition-all ${revenueView === v.toLowerCase() ? 'bg-[#2563EB] text-white' : 'text-[#6b7280] hover:text-white'}`}
                   style={{ fontWeight: 500 }}>
                   {v}
                 </button>
@@ -118,7 +162,7 @@ export function DashboardPage() {
             </div>
           </div>
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={revenueData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <AreaChart data={revenueSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#2563EB" stopOpacity={0.2} />
@@ -137,15 +181,15 @@ export function DashboardPage() {
           <div className="grid grid-cols-3 gap-3 mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
             <div>
               <div className="text-xs text-[#4b5563] mb-1">Avg / Day</div>
-              <div className="text-white text-sm" style={{ fontWeight: 600 }}>$1,761</div>
+              <div className="text-white text-sm" style={{ fontWeight: 600 }}>${Math.round(averageRevenue).toLocaleString()}</div>
             </div>
             <div>
               <div className="text-xs text-[#4b5563] mb-1">Best Day</div>
-              <div className="text-white text-sm" style={{ fontWeight: 600 }}>Saturday</div>
+              <div className="text-white text-sm" style={{ fontWeight: 600 }}>{bestRevenueDay}</div>
             </div>
             <div>
               <div className="text-xs text-[#4b5563] mb-1">Total Appts</div>
-              <div className="text-white text-sm" style={{ fontWeight: 600 }}>169</div>
+              <div className="text-white text-sm" style={{ fontWeight: 600 }}>{totalAppointmentsWeek}</div>
             </div>
           </div>
         </div>
@@ -159,8 +203,8 @@ export function DashboardPage() {
           <div className="flex justify-center">
             <ResponsiveContainer width={160} height={160}>
               <PieChart>
-                <Pie data={servicePopularityData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" strokeWidth={0}>
-                  {servicePopularityData.map((entry, index) => (
+                <Pie data={serviceBreakdown} cx="50%" cy="50%" innerRadius={50} outerRadius={75} dataKey="value" strokeWidth={0}>
+                  {serviceBreakdown.map((entry, index) => (
                     <Cell key={index} fill={entry.color} />
                   ))}
                 </Pie>
@@ -168,7 +212,7 @@ export function DashboardPage() {
             </ResponsiveContainer>
           </div>
           <div className="space-y-2 mt-3">
-            {servicePopularityData.map((item, i) => (
+            {serviceBreakdown.map((item, i) => (
               <div key={i} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: item.color }} />
@@ -188,7 +232,7 @@ export function DashboardPage() {
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
             <div>
               <h3 className="text-white text-sm" style={{ fontWeight: 600 }}>Today's Schedule</h3>
-              <p className="text-[#6b7280] text-xs mt-0.5">{filteredAppointments.length} appointments</p>
+              <p className="text-[#6b7280] text-xs mt-0.5">{todayAppts.length} appointments</p>
             </div>
             <button
               onClick={() => navigate('/appointments')}
@@ -197,7 +241,7 @@ export function DashboardPage() {
               View all <ChevronRight size={14} />
             </button>
           </div>
-          <div className="divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
+          <div className="divide-y divide-white/[0.04]">
             {todayAppts.map(appt => (
               <div key={appt.id} className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.02] transition-all">
                 <div className="w-1 h-10 rounded-full flex-shrink-0" style={{ background: appt.color }} />
@@ -243,7 +287,7 @@ export function DashboardPage() {
                 Manage <ChevronRight size={12} />
               </button>
             </div>
-            <div className="divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
+            <div className="divide-y divide-white/[0.04]">
               {lowStock.slice(0, 4).map(p => (
                 <div key={p.id} className="flex items-center justify-between px-4 py-2.5">
                   <div>

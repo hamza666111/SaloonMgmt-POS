@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Search, Plus, Filter, ChevronRight, Star,
   Phone, Mail, Crown, Shield, Award, X, User
 } from 'lucide-react';
-import { mockClients } from '../data/mockData';
 import { toast } from 'sonner';
-import { supabase, isSupabaseConfigured, handleSupabaseError } from '../lib/supabase';
+import { createClient as createClientRecord, getClients } from '../lib/supabaseData';
 import { useAuthStore } from '../store/useAuthStore';
 import { useBranchStore } from '../store/useBranchStore';
 
@@ -27,8 +26,27 @@ export function ClientsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClient, setNewClient] = useState({ name: '', phone: '', email: '', branchId: activeBranchId });
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [clients, setClients] = useState<any[]>([]);
 
   const isAdmin = user?.role === 'admin';
+
+  const loadClients = async () => {
+    setIsLoading(true);
+    try {
+      const rows = await getClients(activeBranchId);
+      setClients(rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load clients';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadClients();
+  }, [activeBranchId]);
 
   const handleAddClient = async () => {
     if (!newClient.name || !newClient.phone) {
@@ -36,47 +54,21 @@ export function ClientsPage() {
       return;
     }
 
-    // Check if Supabase is configured
-    if (!isSupabaseConfigured || !supabase) {
-      toast.error('Database not configured. Please add Supabase credentials to .env file');
-      console.error('Supabase credentials missing. Update .env file with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY');
-      return;
-    }
-
     setIsSaving(true);
     try {
       const branchId = isAdmin ? (newClient.branchId || activeBranchId) : (user?.branchId || activeBranchId);
-      if (!branchId) throw new Error('Branch is required to create a client');
 
-      const payload = {
-        full_name: newClient.name.trim(),
+      await createClientRecord({
+        name: newClient.name.trim(),
         phone: newClient.phone.trim(),
         email: newClient.email?.trim() || undefined,
-        branch_id: branchId
-      };
-
-      const cleanedPayload = Object.fromEntries(
-        Object.entries(payload).filter(([, value]) => value !== undefined)
-      );
-
-      if (!cleanedPayload || Object.keys(cleanedPayload).length === 0) {
-        throw new Error('Insert payload is empty');
-      }
-
-      const { error } = await supabase
-        .from('clients')
-        .insert([cleanedPayload])
-        .select();
-
-      if (error) {
-        handleSupabaseError(error);
-        throw error;
-      }
+        branch_id: branchId,
+      });
 
       toast.success('Client added successfully');
       setShowAddModal(false);
       setNewClient({ name: '', phone: '', email: '', branchId: activeBranchId });
-      // Optionally refresh client list here
+      await loadClients();
     } catch (error: any) {
       toast.error(error.message || 'Failed to add client');
     } finally {
@@ -84,13 +76,22 @@ export function ClientsPage() {
     }
   };
 
-  const filtered = mockClients.filter(c => {
+  const filtered = useMemo(() => clients.filter(c => {
     const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search) || c.email.toLowerCase().includes(search.toLowerCase());
     const matchLoyalty = loyaltyFilter === 'All' || c.loyalty === loyaltyFilter;
     const matchMembership = membershipFilter === 'All' || c.membership === membershipFilter;
     return matchSearch && matchLoyalty && matchMembership;
-  });
+  }), [clients, search, loyaltyFilter, membershipFilter]);
+
+  const totalClients = clients.length;
+  const vipMembers = clients.filter(client => client.membership === 'VIP').length;
+  const avgLtv = totalClients > 0
+    ? Math.round(clients.reduce((sum, client) => sum + (client.spend || 0), 0) / totalClients)
+    : 0;
+  const retentionRate = totalClients > 0
+    ? Math.round((clients.filter(client => (client.visits || 0) > 1).length / totalClients) * 100)
+    : 0;
 
   return (
     <div className="p-4 lg:p-6 space-y-5 max-w-[1400px] mx-auto">
@@ -98,7 +99,7 @@ export function ClientsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-white text-xl" style={{ fontWeight: 700 }}>Clients</h1>
-          <p className="text-[#6b7280] text-sm mt-0.5">{mockClients.length} total clients</p>
+          <p className="text-[#6b7280] text-sm mt-0.5">{totalClients} total clients</p>
         </div>
         <button
           onClick={() => {
@@ -115,10 +116,10 @@ export function ClientsPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Clients', value: '8', sub: '+3 this month', color: '#2563EB' },
-          { label: 'VIP Members', value: '2', sub: '25% of base', color: '#f59e0b' },
-          { label: 'Avg. Lifetime Value', value: '$2,245', sub: 'Per client', color: '#10b981' },
-          { label: 'Retention Rate', value: '87%', sub: '↑ 4% this month', color: '#8b5cf6' },
+          { label: 'Total Clients', value: `${totalClients}`, sub: 'Active records', color: '#2563EB' },
+          { label: 'VIP Members', value: `${vipMembers}`, sub: `${totalClients ? Math.round((vipMembers / totalClients) * 100) : 0}% of base`, color: '#f59e0b' },
+          { label: 'Avg. Lifetime Value', value: `$${avgLtv.toLocaleString()}`, sub: 'Per client', color: '#10b981' },
+          { label: 'Retention Rate', value: `${retentionRate}%`, sub: 'Returning clients', color: '#8b5cf6' },
         ].map(stat => (
           <div key={stat.label} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div className="text-white text-xl mb-0.5" style={{ fontWeight: 700, color: stat.color }}>{stat.value}</div>
@@ -178,7 +179,13 @@ export function ClientsPage() {
           <div className="col-span-1">LIFETIME VALUE</div>
           <div className="col-span-1"></div>
         </div>
-        <div className="divide-y" style={{ divideColor: 'rgba(255,255,255,0.04)' }}>
+        <div className="divide-y">
+          {isLoading && (
+            <div className="px-5 py-8 text-center text-[#6b7280] text-sm">Loading clients...</div>
+          )}
+          {!isLoading && filtered.length === 0 && (
+            <div className="px-5 py-8 text-center text-[#6b7280] text-sm">No clients found</div>
+          )}
           {filtered.map(client => {
             const lConfig = loyaltyConfig[client.loyalty];
             return (
@@ -293,7 +300,7 @@ export function ClientsPage() {
                     onChange={e => setNewClient({ ...newClient, branchId: e.target.value })}
                     className="w-full bg-[#111111] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-white focus:border-[#2563EB]/50 transition-all"
                   >
-                    {branches.map(branch => (
+                    {branches.map((branch: { id: string; name: string }) => (
                       <option key={branch.id} value={branch.id}>
                         {branch.name}
                       </option>
