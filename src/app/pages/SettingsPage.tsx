@@ -28,6 +28,35 @@ const tabs = [
   { id: 'loyalty', label: 'Loyalty Status', icon: Award },
 ];
 
+const InputField = ({ label, value, onChange, type = 'text', placeholder = '' }: any) => (
+  <div>
+    <label className="text-xs text-[#9ca3af] mb-2 block" style={{ letterSpacing: '0.05em' }}>{label}</label>
+    <input
+      type={type}
+      value={value}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full bg-[#111111] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-white placeholder-[#3f3f46] focus:border-[#2563EB]/50 transition-all"
+    />
+  </div>
+);
+
+const Toggle = ({ label, desc, value, onChange }: any) => (
+  <div className="flex items-center justify-between p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+    <div>
+      <div className="text-white text-sm" style={{ fontWeight: 500 }}>{label}</div>
+      {desc && <div className="text-[#4b5563] text-xs mt-0.5">{desc}</div>}
+    </div>
+    <button
+      onClick={() => onChange(!value)}
+      className="w-11 h-6 rounded-full transition-all relative flex-shrink-0"
+      style={{ background: value ? '#2563EB' : '#2a2a2a' }}
+    >
+      <div className="w-4 h-4 bg-white rounded-full absolute top-1 transition-all" style={{ left: value ? '24px' : '4px' }} />
+    </button>
+  </div>
+);
+
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState('business');
   const {
@@ -216,36 +245,7 @@ export function SettingsPage() {
     }
   };
 
-  const InputField = ({ label, value, onChange, type = 'text', placeholder = '' }: any) => (
-    <div>
-      <label className="text-xs text-[#9ca3af] mb-2 block" style={{ letterSpacing: '0.05em' }}>{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-[#111111] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-white placeholder-[#3f3f46] focus:border-[#2563EB]/50 transition-all"
-      />
-    </div>
-  );
-
   const createId = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
-
-  const Toggle = ({ label, desc, value, onChange }: any) => (
-    <div className="flex items-center justify-between p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-      <div>
-        <div className="text-white text-sm" style={{ fontWeight: 500 }}>{label}</div>
-        {desc && <div className="text-[#4b5563] text-xs mt-0.5">{desc}</div>}
-      </div>
-      <button
-        onClick={() => onChange(!value)}
-        className="w-11 h-6 rounded-full transition-all relative flex-shrink-0"
-        style={{ background: value ? '#2563EB' : '#2a2a2a' }}
-      >
-        <div className="w-4 h-4 bg-white rounded-full absolute top-1 transition-all" style={{ left: value ? '24px' : '4px' }} />
-      </button>
-    </div>
-  );
 
   return (
     <div className="flex flex-col md:flex-row h-full" style={{ background: '#111111' }}>
@@ -496,11 +496,13 @@ export function SettingsPage() {
                           onClick={async () => {
                             if (!serviceForm.name.trim()) { toast.error('Service name is required'); return; }
                             try {
-                              const created = await createService({ name: serviceForm.name, price: serviceForm.price, duration: serviceForm.duration, category: serviceForm.category || 'General', branchId: activeBranchId });
-                              if (created) setServicesList(prev => [created as UiService, ...prev]);
+                              await createService({ name: serviceForm.name, price: serviceForm.price || '0', duration: serviceForm.duration || '30', category: serviceForm.category || 'General', branchId: activeBranchId });
+                              const refreshed = await getServices(activeBranchId);
+                              setServicesList(refreshed);
                               setShowAddService(false);
+                              setServiceForm({ name: '', price: '', duration: '', category: '' });
                               toast.success('Service added');
-                            } catch { toast.error('Failed to add service'); }
+                            } catch (err) { console.error(err); toast.error('Failed to add service'); }
                           }}
                           className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
                         >
@@ -655,11 +657,13 @@ export function SettingsPage() {
                           onClick={async () => {
                             if (!productForm.name.trim()) { toast.error('Product name is required'); return; }
                             try {
-                              const created = await createProduct({ name: productForm.name, price: productForm.price, stock: productForm.stock, category: productForm.category || 'General', sku: productForm.sku, supplier: productForm.supplier, reorderLevel: productForm.reorderLevel, branchId: activeBranchId });
-                              if (created) setProductsList(prev => [created as UiProduct, ...prev]);
+                              await createProduct({ name: productForm.name, price: productForm.price || '0', stock: productForm.stock || '0', category: productForm.category || 'General', sku: productForm.sku, supplier: productForm.supplier, reorderLevel: productForm.reorderLevel, branchId: activeBranchId });
+                              const refreshed = await getProducts(activeBranchId);
+                              setProductsList(refreshed);
                               setShowAddProduct(false);
+                              setProductForm({ name: '', price: '', stock: '', category: '', sku: '', supplier: '', reorderLevel: '' });
                               toast.success('Product added');
-                            } catch { toast.error('Failed to add product'); }
+                            } catch (err) { console.error(err); toast.error('Failed to add product'); }
                           }}
                           className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
                         >
