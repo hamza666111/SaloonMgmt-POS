@@ -414,7 +414,7 @@ export function SettingsPage() {
                 <div className="flex justify-between items-start mb-6">
                   <div>
                     <h2 className="text-white text-lg mb-1" style={{ fontWeight: 700 }}>Branch Management</h2>
-                    <p className="text-[#6b7280] text-sm">Add and configure physical store locations</p>
+                    <p className="text-[#6b7280] text-sm">Add, edit address/phone, and configure store locations</p>
                   </div>
                   <button 
                     onClick={() => {
@@ -432,12 +432,9 @@ export function SettingsPage() {
                 </div>
                 <div className="space-y-4">
                   {branches.map(branch => (
-                    <div key={branch.id} className="p-4 rounded-xl border border-white/[0.08]" style={{ background: '#161616' }}>
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div className="text-white text-sm font-semibold">{branch.name}</div>
-                          <div className="text-[#9ca3af] text-xs mt-1">{branch.address}</div>
-                        </div>
+                    <div key={branch.id} className="p-5 rounded-xl border border-white/[0.08]" style={{ background: '#161616' }}>
+                      <div className="flex justify-between items-start">
+                        <div className="text-white text-sm font-semibold mb-3">{branch.name}</div>
                         <div className="flex items-center gap-3 w-48">
                           <Toggle 
                             label=""
@@ -445,6 +442,20 @@ export function SettingsPage() {
                             onChange={(val: boolean) => updateBranch(branch.id, { isActive: val })}
                           />
                         </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                        <InputField
+                          label="Address"
+                          value={branch.address || ''}
+                          onChange={(val: string) => updateBranch(branch.id, { address: val })}
+                          placeholder="123 Main St, City, State"
+                        />
+                        <InputField
+                          label="Phone Number"
+                          value={branch.phone || ''}
+                          onChange={(val: string) => updateBranch(branch.id, { phone: val })}
+                          placeholder="+1 (555) 000-0000"
+                        />
                       </div>
                     </div>
                   ))}

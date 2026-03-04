@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Search, Plus, Filter, ChevronRight, Star,
-  Phone, Mail, Crown, Shield, Award, X, User
+  Phone, Mail, Crown, Shield, Award, X, User,
+  Trash2, ToggleLeft, ToggleRight, MoreVertical
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { createClient as createClientRecord, getClients } from '../lib/supabaseData';
+import { createClient as createClientRecord, getClients, updateClient, deleteClient } from '../lib/supabaseData';
 import { useAuthStore } from '../store/useAuthStore';
 import { useBranchStore } from '../store/useBranchStore';
 
@@ -28,8 +29,40 @@ export function ClientsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [clients, setClients] = useState<any[]>([]);
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
+
+  const handleToggleActive = async (e: React.MouseEvent, clientId: string, currentlyActive: boolean) => {
+    e.stopPropagation();
+    setActionMenuId(null);
+    try {
+      const newStatus = currentlyActive ? 'inactive' : 'active';
+      // We store active state as membership change or a dedicated field.
+      // Using a simple approach: set loyalty to 'Inactive' or restore to 'Bronze'
+      await updateClient(clientId, { membership: currentlyActive ? 'Inactive' : 'None' });
+      toast.success(currentlyActive ? 'Client deactivated' : 'Client activated');
+      await loadClients();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update client';
+      toast.error(message);
+    }
+  };
+
+  const handleDeleteClient = async (e: React.MouseEvent, clientId: string) => {
+    e.stopPropagation();
+    setActionMenuId(null);
+    setConfirmDeleteId(null);
+    try {
+      await deleteClient(clientId);
+      toast.success('Client removed');
+      await loadClients();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove client';
+      toast.error(message);
+    }
+  };
 
   const loadClients = async () => {
     setIsLoading(true);
@@ -47,6 +80,14 @@ export function ClientsPage() {
   useEffect(() => {
     void loadClients();
   }, [activeBranchId]);
+
+  // Close action menu on outside click
+  useEffect(() => {
+    if (!actionMenuId) return;
+    const handler = () => { setActionMenuId(null); setConfirmDeleteId(null); };
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [actionMenuId]);
 
   const handleAddClient = async () => {
     if (!newClient.name || !newClient.phone) {
@@ -177,7 +218,7 @@ export function ClientsPage() {
           <div className="col-span-2">MEMBERSHIP</div>
           <div className="col-span-1">VISITS</div>
           <div className="col-span-1">LIFETIME VALUE</div>
-          <div className="col-span-1"></div>
+          <div className="col-span-1 text-right">ACTIONS</div>
         </div>
         <div className="divide-y">
           {isLoading && (
@@ -224,8 +265,8 @@ export function ClientsPage() {
 
                 {/* Membership */}
                 <div className="col-span-2 hidden md:block">
-                  <span className="text-xs text-[#9ca3af]" style={{ fontWeight: client.membership !== 'None' ? 500 : 400 }}>
-                    {client.membership}
+                  <span className={`text-xs ${client.membership === 'Inactive' ? 'text-red-400' : 'text-[#9ca3af]'}`} style={{ fontWeight: client.membership !== 'None' ? 500 : 400 }}>
+                    {client.membership === 'Inactive' ? '⏸ Inactive' : client.membership}
                   </span>
                 </div>
 
@@ -240,8 +281,43 @@ export function ClientsPage() {
                   <span className="text-white text-sm" style={{ fontWeight: 700 }}>${client.spend.toLocaleString()}</span>
                 </div>
 
-                <div className="col-span-1 flex justify-end">
-                  <ChevronRight size={16} className="text-[#4b5563]" />
+                <div className="col-span-1 flex justify-end relative">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setActionMenuId(actionMenuId === client.id ? null : client.id); }}
+                    className="p-1.5 rounded-lg hover:bg-white/[0.06] text-[#6b7280] hover:text-white transition-all"
+                  >
+                    <MoreVertical size={16} />
+                  </button>
+                  {actionMenuId === client.id && (
+                    <div
+                      className="absolute right-0 top-8 z-50 w-48 rounded-xl overflow-hidden shadow-xl"
+                      style={{ background: '#1f1f1f', border: '1px solid rgba(255,255,255,0.1)' }}
+                    >
+                      <button
+                        onClick={(e) => handleToggleActive(e, client.id, client.membership !== 'Inactive')}
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-[#d1d5db] hover:bg-white/[0.06] transition-all"
+                      >
+                        {client.membership === 'Inactive'
+                          ? <><ToggleRight size={15} className="text-green-400" /> Activate</>
+                          : <><ToggleLeft size={15} className="text-yellow-400" /> Deactivate</>}
+                      </button>
+                      {confirmDeleteId === client.id ? (
+                        <button
+                          onClick={(e) => handleDeleteClient(e, client.id)}
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-400 hover:bg-red-400/10 transition-all font-semibold"
+                        >
+                          <Trash2 size={15} /> Confirm Remove
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(client.id); }}
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-red-400 hover:bg-red-400/10 transition-all"
+                        >
+                          <Trash2 size={15} /> Remove Client
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Mobile row info */}

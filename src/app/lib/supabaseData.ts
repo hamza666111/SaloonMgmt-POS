@@ -475,6 +475,9 @@ export function initializeOfflineSync() {
         const typed = payload as { id: string; updates: Partial<UiClient> };
         await remoteUpdateClient(typed.id, typed.updates);
       },
+      delete_client: async payload => {
+        await remoteDeleteClient(payload as { id: string });
+      },
       create_staff: async payload => {
         await remoteCreateStaff(payload as Parameters<typeof createStaff>[0]);
       },
@@ -955,15 +958,16 @@ async function remoteCreateBranch(input: Omit<UiBranch, 'id'>) {
 
 async function remoteUpdateBranch(id: string, updates: Partial<UiBranch>) {
   if (!supabase) throw new Error('Supabase not configured');
+  const payload: Record<string, any> = {};
+  if (updates.name !== undefined) payload.name = updates.name;
+  if (updates.address !== undefined) payload.address = updates.address;
+  if (updates.phone !== undefined) payload.phone = updates.phone;
+  if (updates.email !== undefined) payload.email = updates.email;
+  if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+
   const { data, error } = await supabase
     .from('branches')
-    .update({
-      name: updates.name,
-      address: updates.address,
-      phone: updates.phone,
-      email: updates.email,
-      is_active: updates.isActive,
-    })
+    .update(payload)
     .eq('id', id)
     .select('id,name,address,phone,email,is_active')
     .single();
@@ -1066,6 +1070,16 @@ async function remoteUpdateClient(id: string, updates: Partial<UiClient>) {
 
   if (error) throw error;
   return mapClientRow(data, {});
+}
+
+async function remoteDeleteClient(input: { id: string }) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase
+    .from('clients')
+    .delete()
+    .eq('id', input.id);
+
+  if (error) throw error;
 }
 
 async function remoteGetStaff(branchId?: string) {
@@ -1214,13 +1228,12 @@ async function remoteUpdateStaff(id: string, updates: Partial<UiStaff>) {
   if (!supabase) throw new Error('Supabase not configured');
   const roleMap = await getRoleMapByName();
 
-  const payload: Record<string, any> = {
-    full_name: updates.fullName || updates.name,
-    email: updates.email,
-    phone: updates.phone,
-    commission_percent: updates.commissionPercent,
-    is_active: updates.status ? updates.status.toLowerCase() === 'active' : undefined,
-  };
+  const payload: Record<string, any> = {};
+  if (updates.fullName || updates.name) payload.full_name = updates.fullName || updates.name;
+  if (updates.email !== undefined) payload.email = updates.email;
+  if (updates.phone !== undefined) payload.phone = updates.phone;
+  if (updates.commissionPercent !== undefined) payload.commission_percent = updates.commissionPercent;
+  if (updates.status !== undefined) payload.is_active = updates.status.toLowerCase() === 'active';
 
   if (updates.role) {
     payload.role_id = roleMap[String(updates.role).toLowerCase()] || undefined;
@@ -2018,10 +2031,13 @@ async function remoteGetSettings(branchId: string) {
 async function remoteSaveSettings(branchId: string, settings: Record<string, any>) {
   if (!supabase) throw new Error('Supabase not configured');
 
+  const resolvedId = await resolveBranchId(branchId);
+  if (!resolvedId) throw new Error('No active branch found – cannot save settings');
+
   const { error } = await supabase
     .from('branch_settings')
     .upsert({
-      branch_id: branchId,
+      branch_id: resolvedId,
       settings_json: settings,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'branch_id' });
@@ -2191,6 +2207,15 @@ export async function updateClient(id: string, updates: Partial<UiClient>) {
     () => remoteUpdateClient(id, updates),
     localUpdate,
   );
+}
+
+export async function deleteClient(id: string) {
+  const localDelete = async () => {
+    const rows = loadList<UiClient>(STORAGE_KEYS.clients, seedClients());
+    saveList(STORAGE_KEYS.clients, rows.filter(row => row.id !== id));
+  };
+
+  return runMutationWithFallback('delete_client', { id }, () => remoteDeleteClient({ id }), localDelete);
 }
 
 export async function getClientById(id: string) {

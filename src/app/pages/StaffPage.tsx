@@ -3,7 +3,7 @@ import { StaffForm, StaffFormValues } from "../components/forms/StaffForm";
 import { DataTable, ColumnDef } from "../components/ui/data-table";
 import { Modal } from "../components/ui/modal";
 import { Button } from "../components/ui/button";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "../store/useAuthStore";
 import { useBranchStore } from "../store/useBranchStore";
@@ -89,6 +89,18 @@ export const StaffPage = () => {
       accessorKey: "commissionPercent",
       cell: (row) => `${row.commissionPercent}%`
     },
+    {
+      id: "status",
+      header: "Status",
+      accessorKey: "status",
+      cell: (row) => (
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          row.status === 'Active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+        }`}>
+          {row.status || 'Active'}
+        </span>
+      )
+    },
   ];
 
   const handleCreateOrUpdate = async (data: StaffFormValues) => {
@@ -144,8 +156,27 @@ export const StaffPage = () => {
     }
   };
 
+  const toggleStaffActive = async (staffMember: UiStaff) => {
+    try {
+      const newStatus = staffMember.status === 'Active' ? 'Inactive' : 'Active';
+      await updateStaffRecord(staffMember.id, { status: newStatus });
+      await loadStaff();
+      toast.success(`${staffMember.fullName} ${newStatus === 'Active' ? 'activated' : 'deactivated'}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update staff status';
+      toast.error(message);
+    }
+  };
+
   const ActionCell = (row: UiStaff) => (
     <div className="flex items-center gap-2">
+      <button
+        onClick={() => toggleStaffActive(row)}
+        className={`p-2 rounded-lg ${row.status === 'Active' ? 'text-yellow-400 hover:bg-yellow-400/10' : 'text-green-400 hover:bg-green-400/10'}`}
+        title={row.status === 'Active' ? 'Deactivate' : 'Activate'}
+      >
+        {row.status === 'Active' ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+      </button>
       <button onClick={() => openEdit(row)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg">
         <Pencil className="w-4 h-4" />
       </button>
