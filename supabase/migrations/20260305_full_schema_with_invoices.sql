@@ -1,5 +1,5 @@
 -- ==========================================
--- Full Schema Refresh + Invoices + Demo Users
+-- Full Schema Refresh + 1 Invoices + Demo Users
 -- Date: 2026-03-04
 -- ==========================================
 
