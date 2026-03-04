@@ -6,6 +6,28 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+DO $$
+BEGIN
+  IF to_regclass('public.branches') IS NULL
+    OR to_regclass('public.users') IS NULL
+    OR to_regclass('public.roles') IS NULL
+    OR to_regclass('public.permissions') IS NULL
+    OR to_regclass('public.role_permissions') IS NULL
+    OR to_regclass('public.clients') IS NULL
+    OR to_regclass('public.services') IS NULL
+    OR to_regclass('public.products') IS NULL
+    OR to_regclass('public.appointments') IS NULL
+    OR to_regclass('public.sales') IS NULL
+    OR to_regclass('public.sale_items') IS NULL
+    OR to_regclass('public.payments') IS NULL
+    OR to_regclass('public.refunds') IS NULL
+    OR to_regclass('public.campaigns') IS NULL
+    OR to_regclass('public.payroll_records') IS NULL THEN
+    RAISE EXCEPTION 'Missing prerequisite core schema. Run migration 20260303_core_schema.sql before 20260304_backend_hardening.sql.';
+  END IF;
+END
+$$;
+
 -- ------------------------------------------
 -- Settings + Role Override Tables
 -- ------------------------------------------
