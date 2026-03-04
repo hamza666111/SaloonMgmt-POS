@@ -1270,7 +1270,7 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO payroll_records (id, staff_id, period_start, period_end, service_revenue, commission_earned, tips, product_commission, booth_rent, deductions, net_payout, status, created_at)
 VALUES
-  ('f1111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000004', '2026-02-15', '2026-02-29', 320.00, 160.00, 45.00, 22.00, 0, 15.00, 212.00, 'approved', NOW() - INTERVAL '3 days')
+  ('f1111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000004', '2026-02-15', '2026-02-28', 320.00, 160.00, 45.00, 22.00, 0, 15.00, 212.00, 'approved', NOW() - INTERVAL '3 days')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO audit_logs (id, user_id, action, module, record_id, details, ip_address, created_at)
