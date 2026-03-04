@@ -2,16 +2,24 @@ import { useEffect, useState } from 'react';
 import {
   Building2, Receipt, Percent, Calendar, CreditCard,
   Palette, Save, ChevronRight, Globe, Clock, Phone,
-  Mail, MapPin, Camera, Scissors, Check, Map, Award, Crown, Shield, Star, Plus, Trash2
+  Mail, MapPin, Camera, Scissors, Check, Map, Award, Crown, Shield, Star, Plus, Trash2,
+  Package, Pencil, Power, ShoppingBag
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useBranchStore } from '../store/useBranchStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { getSettings, saveSettings } from '../lib/supabaseData';
+import {
+  getSettings, saveSettings,
+  getServices, createService, updateService, deleteService,
+  getProducts, createProduct, updateProduct, deleteProduct,
+  type UiService, type UiProduct,
+} from '../lib/supabaseData';
 
 const tabs = [
   { id: 'business', label: 'Business Info', icon: Building2 },
   { id: 'branches', label: 'Branches', icon: Map },
+  { id: 'services', label: 'Services', icon: Scissors },
+  { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'tax', label: 'Tax Settings', icon: Receipt },
   { id: 'commission', label: 'Commission Rules', icon: Percent },
   { id: 'booking', label: 'Booking Rules', icon: Calendar },
@@ -80,6 +88,20 @@ export function SettingsPage() {
     { name: 'Gift Cards', desc: 'Branded gift card program', active: true, color: '#f59e0b' },
   ]);
 
+  // ── Services state ──
+  const [servicesEnabled, setServicesEnabled] = useState(true);
+  const [servicesList, setServicesList] = useState<UiService[]>([]);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [serviceForm, setServiceForm] = useState({ name: '', price: '', duration: '', category: '' });
+  const [showAddService, setShowAddService] = useState(false);
+
+  // ── Inventory state ──
+  const [inventoryEnabled, setInventoryEnabled] = useState(true);
+  const [productsList, setProductsList] = useState<UiProduct[]>([]);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [productForm, setProductForm] = useState({ name: '', price: '', stock: '', category: '', sku: '', supplier: '', reorderLevel: '' });
+  const [showAddProduct, setShowAddProduct] = useState(false);
+
   const tierMeta: Record<string, { color: string; bg: string; border: string; icon: any; label: string }> = {
     Bronze:   { color: '#b45309', bg: 'rgba(180,83,9,0.08)',    border: 'rgba(180,83,9,0.25)',    icon: Star,   label: 'Bronze' },
     Silver:   { color: '#9ca3af', bg: 'rgba(156,163,175,0.08)', border: 'rgba(156,163,175,0.25)', icon: Shield, label: 'Silver' },
@@ -140,12 +162,34 @@ export function SettingsPage() {
         if (Array.isArray(settings.paymentProcessors)) {
           setPaymentProcessors(settings.paymentProcessors);
         }
+
+        if (typeof settings.servicesEnabled === 'boolean') {
+          setServicesEnabled(settings.servicesEnabled);
+        }
+
+        if (typeof settings.inventoryEnabled === 'boolean') {
+          setInventoryEnabled(settings.inventoryEnabled);
+        }
       } catch {
         toast.error('Failed to load branch settings');
       }
     };
 
+    const loadServiceData = async () => {
+      try {
+        const [svcs, prods] = await Promise.all([
+          getServices(activeBranchId),
+          getProducts(activeBranchId),
+        ]);
+        setServicesList(svcs);
+        setProductsList(prods);
+      } catch {
+        // fallback already handled inside data layer
+      }
+    };
+
     void loadSavedSettings();
+    void loadServiceData();
   }, [activeBranchId]);
 
   const handleSave = async () => {
@@ -160,6 +204,8 @@ export function SettingsPage() {
         bookingRules,
         loyaltyTiers,
         paymentProcessors,
+        servicesEnabled,
+        inventoryEnabled,
       });
       toast.success('Settings saved successfully');
     } catch (error) {
@@ -405,6 +451,327 @@ export function SettingsPage() {
                 </div>
               </>
             )}
+
+          {activeTab === 'services' && (
+            <>
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h2 className="text-white text-lg mb-1" style={{ fontWeight: 700 }}>Services</h2>
+                  <p className="text-[#6b7280] text-sm">Add, edit, remove or disable salon services</p>
+                </div>
+              </div>
+
+              <Toggle
+                label="Enable Services"
+                desc="Turn off to hide the services catalogue across the system"
+                value={servicesEnabled}
+                onChange={(v: boolean) => setServicesEnabled(v)}
+              />
+
+              {servicesEnabled && (
+                <div className="space-y-4 mt-2">
+                  {/* Add service button */}
+                  {!showAddService && (
+                    <button
+                      onClick={() => { setShowAddService(true); setServiceForm({ name: '', price: '', duration: '', category: '' }); }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-white transition-all"
+                      style={{ background: '#2563EB', fontWeight: 600 }}
+                    >
+                      <Plus size={15} /> Add Service
+                    </button>
+                  )}
+
+                  {/* Add service form */}
+                  {showAddService && (
+                    <div className="p-5 rounded-2xl space-y-4" style={{ background: '#1a1a1a', border: '1px solid rgba(37,99,235,0.3)' }}>
+                      <div className="text-white text-sm" style={{ fontWeight: 600 }}>New Service</div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <InputField label="SERVICE NAME" value={serviceForm.name} onChange={(v: string) => setServiceForm(f => ({ ...f, name: v }))} placeholder="e.g. Classic Cut" />
+                        <InputField label="PRICE ($)" value={serviceForm.price} onChange={(v: string) => setServiceForm(f => ({ ...f, price: v }))} type="number" placeholder="45" />
+                        <InputField label="DURATION (MINS)" value={serviceForm.duration} onChange={(v: string) => setServiceForm(f => ({ ...f, duration: v }))} type="number" placeholder="30" />
+                        <InputField label="CATEGORY" value={serviceForm.category} onChange={(v: string) => setServiceForm(f => ({ ...f, category: v }))} placeholder="Haircut" />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            if (!serviceForm.name.trim()) { toast.error('Service name is required'); return; }
+                            try {
+                              const created = await createService({ name: serviceForm.name, price: serviceForm.price, duration: serviceForm.duration, category: serviceForm.category || 'General', branchId: activeBranchId });
+                              if (created) setServicesList(prev => [created as UiService, ...prev]);
+                              setShowAddService(false);
+                              toast.success('Service added');
+                            } catch { toast.error('Failed to add service'); }
+                          }}
+                          className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
+                        >
+                          Save
+                        </button>
+                        <button onClick={() => setShowAddService(false)} className="px-4 py-2 rounded-xl text-sm text-[#9ca3af] transition-all" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Services list */}
+                  {servicesList.length === 0 && (
+                    <div className="p-8 rounded-2xl text-center" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <Scissors size={32} className="mx-auto mb-3 text-[#4b5563]" />
+                      <p className="text-[#6b7280] text-sm">No services yet. Add your first service above.</p>
+                    </div>
+                  )}
+
+                  {servicesList.map(svc => (
+                    <div key={svc.id} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      {editingServiceId === svc.id ? (
+                        <div className="space-y-4">
+                          <div className="grid md:grid-cols-2 gap-4">
+                            <InputField label="SERVICE NAME" value={serviceForm.name} onChange={(v: string) => setServiceForm(f => ({ ...f, name: v }))} />
+                            <InputField label="PRICE ($)" value={serviceForm.price} onChange={(v: string) => setServiceForm(f => ({ ...f, price: v }))} type="number" />
+                            <InputField label="DURATION (MINS)" value={serviceForm.duration} onChange={(v: string) => setServiceForm(f => ({ ...f, duration: v }))} type="number" />
+                            <InputField label="CATEGORY" value={serviceForm.category} onChange={(v: string) => setServiceForm(f => ({ ...f, category: v }))} />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const updates: Partial<UiService> = {
+                                    name: serviceForm.name,
+                                    price: parseFloat(serviceForm.price) || svc.price,
+                                    duration: parseInt(serviceForm.duration) || svc.duration,
+                                    category: serviceForm.category || svc.category,
+                                  };
+                                  await updateService(svc.id, updates);
+                                  setServicesList(prev => prev.map(s => s.id === svc.id ? { ...s, ...updates } : s));
+                                  setEditingServiceId(null);
+                                  toast.success('Service updated');
+                                } catch { toast.error('Failed to update service'); }
+                              }}
+                              className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
+                            >
+                              Save
+                            </button>
+                            <button onClick={() => setEditingServiceId(null)} className="px-4 py-2 rounded-xl text-sm text-[#9ca3af] transition-all" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(37,99,235,0.1)' }}>
+                              <Scissors size={16} style={{ color: '#2563EB' }} />
+                            </div>
+                            <div>
+                              <div className="text-white text-sm" style={{ fontWeight: 600 }}>{svc.name}</div>
+                              <div className="text-[#4b5563] text-xs">{svc.category} · {svc.duration} min · ${svc.price}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => { setEditingServiceId(svc.id); setServiceForm({ name: svc.name, price: String(svc.price), duration: String(svc.duration), category: svc.category }); }}
+                              className="p-2 rounded-xl text-[#9ca3af] hover:text-white transition-all"
+                              style={{ background: 'rgba(255,255,255,0.06)' }}
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await deleteService(svc.id);
+                                  setServicesList(prev => prev.filter(s => s.id !== svc.id));
+                                  toast.success('Service removed');
+                                } catch { toast.error('Failed to remove service'); }
+                              }}
+                              className="p-2 rounded-xl text-red-400 hover:text-red-300 transition-all"
+                              style={{ background: 'rgba(239,68,68,0.08)' }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!servicesEnabled && (
+                <div className="p-5 rounded-xl flex gap-3 mt-2" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                  <Power size={18} className="text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-white text-xs mb-0.5" style={{ fontWeight: 600 }}>Services Disabled</div>
+                    <p className="text-[#6b7280] text-xs">The services catalogue is currently hidden. Re-enable it above to manage services.</p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'inventory' && (
+            <>
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h2 className="text-white text-lg mb-1" style={{ fontWeight: 700 }}>Inventory</h2>
+                  <p className="text-[#6b7280] text-sm">Add, edit, remove or disable product inventory</p>
+                </div>
+              </div>
+
+              <Toggle
+                label="Enable Inventory"
+                desc="Turn off to hide inventory tracking across the system"
+                value={inventoryEnabled}
+                onChange={(v: boolean) => setInventoryEnabled(v)}
+              />
+
+              {inventoryEnabled && (
+                <div className="space-y-4 mt-2">
+                  {/* Add product button */}
+                  {!showAddProduct && (
+                    <button
+                      onClick={() => { setShowAddProduct(true); setProductForm({ name: '', price: '', stock: '', category: '', sku: '', supplier: '', reorderLevel: '' }); }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-white transition-all"
+                      style={{ background: '#2563EB', fontWeight: 600 }}
+                    >
+                      <Plus size={15} /> Add Product
+                    </button>
+                  )}
+
+                  {/* Add product form */}
+                  {showAddProduct && (
+                    <div className="p-5 rounded-2xl space-y-4" style={{ background: '#1a1a1a', border: '1px solid rgba(37,99,235,0.3)' }}>
+                      <div className="text-white text-sm" style={{ fontWeight: 600 }}>New Product</div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <InputField label="PRODUCT NAME" value={productForm.name} onChange={(v: string) => setProductForm(f => ({ ...f, name: v }))} placeholder="e.g. Pomade - Strong Hold" />
+                        <InputField label="PRICE ($)" value={productForm.price} onChange={(v: string) => setProductForm(f => ({ ...f, price: v }))} type="number" placeholder="24" />
+                        <InputField label="STOCK" value={productForm.stock} onChange={(v: string) => setProductForm(f => ({ ...f, stock: v }))} type="number" placeholder="48" />
+                        <InputField label="CATEGORY" value={productForm.category} onChange={(v: string) => setProductForm(f => ({ ...f, category: v }))} placeholder="Styling" />
+                        <InputField label="SKU" value={productForm.sku} onChange={(v: string) => setProductForm(f => ({ ...f, sku: v }))} placeholder="STYLE-001" />
+                        <InputField label="SUPPLIER" value={productForm.supplier} onChange={(v: string) => setProductForm(f => ({ ...f, supplier: v }))} placeholder="BarberCo" />
+                      </div>
+                      <InputField label="REORDER LEVEL" value={productForm.reorderLevel} onChange={(v: string) => setProductForm(f => ({ ...f, reorderLevel: v }))} type="number" placeholder="10" />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            if (!productForm.name.trim()) { toast.error('Product name is required'); return; }
+                            try {
+                              const created = await createProduct({ name: productForm.name, price: productForm.price, stock: productForm.stock, category: productForm.category || 'General', sku: productForm.sku, supplier: productForm.supplier, reorderLevel: productForm.reorderLevel, branchId: activeBranchId });
+                              if (created) setProductsList(prev => [created as UiProduct, ...prev]);
+                              setShowAddProduct(false);
+                              toast.success('Product added');
+                            } catch { toast.error('Failed to add product'); }
+                          }}
+                          className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
+                        >
+                          Save
+                        </button>
+                        <button onClick={() => setShowAddProduct(false)} className="px-4 py-2 rounded-xl text-sm text-[#9ca3af] transition-all" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Products list */}
+                  {productsList.length === 0 && (
+                    <div className="p-8 rounded-2xl text-center" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <Package size={32} className="mx-auto mb-3 text-[#4b5563]" />
+                      <p className="text-[#6b7280] text-sm">No products yet. Add your first product above.</p>
+                    </div>
+                  )}
+
+                  {productsList.map(prod => (
+                    <div key={prod.id} className="p-4 rounded-2xl" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.05)' }}>
+                      {editingProductId === prod.id ? (
+                        <div className="space-y-4">
+                          <div className="grid md:grid-cols-2 gap-4">
+                            <InputField label="PRODUCT NAME" value={productForm.name} onChange={(v: string) => setProductForm(f => ({ ...f, name: v }))} />
+                            <InputField label="PRICE ($)" value={productForm.price} onChange={(v: string) => setProductForm(f => ({ ...f, price: v }))} type="number" />
+                            <InputField label="STOCK" value={productForm.stock} onChange={(v: string) => setProductForm(f => ({ ...f, stock: v }))} type="number" />
+                            <InputField label="CATEGORY" value={productForm.category} onChange={(v: string) => setProductForm(f => ({ ...f, category: v }))} />
+                            <InputField label="SKU" value={productForm.sku} onChange={(v: string) => setProductForm(f => ({ ...f, sku: v }))} />
+                            <InputField label="SUPPLIER" value={productForm.supplier} onChange={(v: string) => setProductForm(f => ({ ...f, supplier: v }))} />
+                          </div>
+                          <InputField label="REORDER LEVEL" value={productForm.reorderLevel} onChange={(v: string) => setProductForm(f => ({ ...f, reorderLevel: v }))} type="number" />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const updates: Partial<UiProduct> = {
+                                    name: productForm.name,
+                                    price: parseFloat(productForm.price) || prod.price,
+                                    stock: parseInt(productForm.stock) || prod.stock,
+                                    category: productForm.category || prod.category,
+                                    sku: productForm.sku || prod.sku,
+                                    supplier: productForm.supplier || prod.supplier,
+                                    reorderLevel: parseInt(productForm.reorderLevel) || prod.reorderLevel,
+                                  };
+                                  await updateProduct(prod.id, updates);
+                                  setProductsList(prev => prev.map(p => p.id === prod.id ? { ...p, ...updates } : p));
+                                  setEditingProductId(null);
+                                  toast.success('Product updated');
+                                } catch { toast.error('Failed to update product'); }
+                              }}
+                              className="px-4 py-2 rounded-xl text-white text-sm transition-all" style={{ background: '#2563EB', fontWeight: 600 }}
+                            >
+                              Save
+                            </button>
+                            <button onClick={() => setEditingProductId(null)} className="px-4 py-2 rounded-xl text-sm text-[#9ca3af] transition-all" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.1)' }}>
+                              <ShoppingBag size={16} style={{ color: '#10b981' }} />
+                            </div>
+                            <div>
+                              <div className="text-white text-sm" style={{ fontWeight: 600 }}>{prod.name}</div>
+                              <div className="text-[#4b5563] text-xs">{prod.category} · ${prod.price} · Stock: {prod.stock}{prod.sku ? ` · ${prod.sku}` : ''}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => { setEditingProductId(prod.id); setProductForm({ name: prod.name, price: String(prod.price), stock: String(prod.stock), category: prod.category, sku: prod.sku, supplier: prod.supplier, reorderLevel: String(prod.reorderLevel) }); }}
+                              className="p-2 rounded-xl text-[#9ca3af] hover:text-white transition-all"
+                              style={{ background: 'rgba(255,255,255,0.06)' }}
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await deleteProduct(prod.id);
+                                  setProductsList(prev => prev.filter(p => p.id !== prod.id));
+                                  toast.success('Product removed');
+                                } catch { toast.error('Failed to remove product'); }
+                              }}
+                              className="p-2 rounded-xl text-red-400 hover:text-red-300 transition-all"
+                              style={{ background: 'rgba(239,68,68,0.08)' }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!inventoryEnabled && (
+                <div className="p-5 rounded-xl flex gap-3 mt-2" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                  <Power size={18} className="text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-white text-xs mb-0.5" style={{ fontWeight: 600 }}>Inventory Disabled</div>
+                    <p className="text-[#6b7280] text-xs">Inventory tracking is currently hidden. Re-enable it above to manage products.</p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
 
           {activeTab === 'tax' && (
             <>

@@ -492,6 +492,21 @@ export function initializeOfflineSync() {
         const typed = payload as { id: string; delta: number };
         await remoteAdjustProductStock(typed.id, typed.delta);
       },
+      delete_product: async payload => {
+        const typed = payload as { id: string };
+        await remoteDeleteProduct(typed.id);
+      },
+      create_service: async payload => {
+        await remoteCreateService(payload as Parameters<typeof createService>[0]);
+      },
+      update_service: async payload => {
+        const typed = payload as { id: string; updates: Partial<UiService> };
+        await remoteUpdateService(typed.id, typed.updates);
+      },
+      delete_service: async payload => {
+        const typed = payload as { id: string };
+        await remoteDeleteService(typed.id);
+      },
       create_sale: async payload => {
         await remoteCreateSale(payload as CreateSaleInput);
       },
@@ -794,6 +809,26 @@ async function ensureProductCategoryId(name: string) {
 
   const { data: created, error: createError } = await supabase
     .from('product_categories')
+    .insert({ name: normalized })
+    .select('id')
+    .single();
+  if (createError) throw new Error(handleSupabaseError(createError).message);
+  return created.id;
+}
+
+async function ensureServiceCategoryId(name: string) {
+  if (!supabase) return null;
+  const normalized = name.trim();
+  const { data: existing, error: findError } = await supabase
+    .from('service_categories')
+    .select('id,name')
+    .ilike('name', normalized)
+    .maybeSingle();
+  if (findError) throw new Error(handleSupabaseError(findError).message);
+  if (existing?.id) return existing.id;
+
+  const { data: created, error: createError } = await supabase
+    .from('service_categories')
     .insert({ name: normalized })
     .select('id')
     .single();
@@ -1220,6 +1255,68 @@ async function remoteGetServices(branchId?: string) {
   if (error) throw error;
 
   return (data || []).map(row => mapServiceRow(row, categoryMap));
+}
+
+async function remoteCreateService(input: {
+  name: string;
+  price: string | number;
+  duration: string | number;
+  category: string;
+  commissionPercent?: string | number;
+  branchId?: string;
+}) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const branchId = await resolveBranchId(input.branchId);
+  const categoryId = await ensureServiceCategoryId(input.category || 'General');
+
+  const payload = {
+    branch_id: branchId || null,
+    category_id: categoryId || null,
+    name: input.name.trim(),
+    price: safeNumber(input.price),
+    duration_minutes: safeNumber(input.duration, 30),
+    commission_percent: safeNumber(input.commissionPercent, 50),
+    is_active: true,
+  };
+
+  const { data, error } = await supabase
+    .from('services')
+    .insert(payload)
+    .select('id,branch_id,category_id,name,price,duration_minutes,commission_percent,is_active')
+    .single();
+
+  if (error) throw error;
+
+  return mapServiceRow(data, { [categoryId || '']: input.category || 'General' });
+}
+
+async function remoteUpdateService(id: string, updates: Partial<UiService>) {
+  if (!supabase) throw new Error('Supabase not configured');
+
+  const payload: Record<string, any> = {};
+  if (typeof updates.name === 'string') payload.name = updates.name;
+  if (typeof updates.price === 'number') payload.price = updates.price;
+  if (typeof updates.duration === 'number') payload.duration_minutes = updates.duration;
+  if (typeof updates.commissionPercent === 'number') payload.commission_percent = updates.commissionPercent;
+
+  if (typeof updates.category === 'string' && updates.category.trim()) {
+    payload.category_id = await ensureServiceCategoryId(updates.category);
+  }
+
+  const { error } = await supabase.from('services').update(payload).eq('id', id);
+  if (error) throw error;
+}
+
+async function remoteDeleteService(id: string) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase.from('services').update({ is_active: false }).eq('id', id);
+  if (error) throw error;
+}
+
+async function remoteDeleteProduct(id: string) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase.from('products').update({ is_active: false }).eq('id', id);
+  if (error) throw error;
 }
 
 async function remoteGetProducts(branchId?: string) {
@@ -2296,6 +2393,52 @@ export async function getServices(branchId?: string) {
   }
 }
 
+export async function createService(serviceData: {
+  name: string;
+  price: string | number;
+  duration: string | number;
+  category: string;
+  commissionPercent?: string | number;
+  branchId?: string;
+}) {
+  const localCreate = async () => {
+    const rows = loadList<UiService>(STORAGE_KEYS.services, seedServices());
+    const created: UiService = {
+      id: generateId('svc-'),
+      name: serviceData.name.trim(),
+      price: safeNumber(serviceData.price),
+      duration: safeNumber(serviceData.duration, 30),
+      category: serviceData.category || 'General',
+      commissionPercent: safeNumber(serviceData.commissionPercent, 50),
+    };
+    saveList(STORAGE_KEYS.services, [created, ...rows]);
+    return created;
+  };
+
+  return runMutationWithFallback('create_service', serviceData, () => remoteCreateService(serviceData), localCreate);
+}
+
+export async function updateService(id: string, updates: Partial<UiService>) {
+  const localUpdate = async () => {
+    const rows = loadList<UiService>(STORAGE_KEYS.services, seedServices());
+    saveList(
+      STORAGE_KEYS.services,
+      rows.map(row => (row.id === id ? { ...row, ...updates } : row)),
+    );
+  };
+
+  return runMutationWithFallback('update_service', { id, updates }, () => remoteUpdateService(id, updates), localUpdate);
+}
+
+export async function deleteService(id: string) {
+  const localDelete = async () => {
+    const rows = loadList<UiService>(STORAGE_KEYS.services, seedServices());
+    saveList(STORAGE_KEYS.services, rows.filter(row => row.id !== id));
+  };
+
+  return runMutationWithFallback('delete_service', { id }, () => remoteDeleteService(id), localDelete);
+}
+
 export async function getProducts(branchId?: string) {
   if (shouldUseLocalReads()) {
     const rows = loadList<UiProduct>(STORAGE_KEYS.products, seedProducts());
@@ -2375,6 +2518,15 @@ export async function adjustProductStock(id: string, delta: number) {
     () => remoteAdjustProductStock(id, delta),
     localAdjust,
   );
+}
+
+export async function deleteProduct(id: string) {
+  const localDelete = async () => {
+    const rows = loadList<UiProduct>(STORAGE_KEYS.products, seedProducts());
+    saveList(STORAGE_KEYS.products, rows.filter(row => row.id !== id));
+  };
+
+  return runMutationWithFallback('delete_product', { id }, () => remoteDeleteProduct(id), localDelete);
 }
 
 export async function getSales(branchId?: string, limit?: number) {
