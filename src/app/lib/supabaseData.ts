@@ -397,9 +397,8 @@ function isNetworkLikeError(error: unknown) {
 }
 
 async function resolveBranchId(branchId?: string) {
-  if (branchId && isUuid(branchId)) return branchId;
-
   if (!hasRemote() || !supabase) {
+    if (branchId && isUuid(branchId)) return branchId;
     const localBranches = loadList<UiBranch>(
       STORAGE_KEYS.branches,
       DEFAULT_BRANCHES.length ? DEFAULT_BRANCHES : mockBranchList.map((item, index) => ({
@@ -412,6 +411,18 @@ async function resolveBranchId(branchId?: string) {
     return localBranches[0]?.id;
   }
 
+  // When remote is available, verify the branch exists in DB
+  if (branchId && isUuid(branchId)) {
+    const { data } = await supabase
+      .from('branches')
+      .select('id')
+      .eq('id', branchId)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (data?.id) return data.id;
+  }
+
+  // Fallback: get the first active branch from DB
   const { data, error } = await supabase
     .from('branches')
     .select('id')
@@ -1240,6 +1251,7 @@ async function remoteDeleteStaff(input: { id: string }) {
 async function remoteGetServices(branchId?: string) {
   if (!supabase) throw new Error('Supabase not configured');
   const categoryMap = await getServiceCategoryMap();
+  const resolvedBranch = await resolveBranchId(branchId);
 
   let query = supabase
     .from('services')
@@ -1247,8 +1259,8 @@ async function remoteGetServices(branchId?: string) {
     .eq('is_active', true)
     .order('name', { ascending: true });
 
-  if (branchId && isUuid(branchId)) {
-    query = query.eq('branch_id', branchId);
+  if (resolvedBranch) {
+    query = query.or(`branch_id.eq.${resolvedBranch},branch_id.is.null`);
   }
 
   const { data, error } = await query;
@@ -1322,6 +1334,7 @@ async function remoteDeleteProduct(id: string) {
 async function remoteGetProducts(branchId?: string) {
   if (!supabase) throw new Error('Supabase not configured');
   const categoryMap = await getProductCategoryMap();
+  const resolvedBranch = await resolveBranchId(branchId);
 
   let query = supabase
     .from('products')
@@ -1329,8 +1342,8 @@ async function remoteGetProducts(branchId?: string) {
     .eq('is_active', true)
     .order('name', { ascending: true });
 
-  if (branchId && isUuid(branchId)) {
-    query = query.eq('branch_id', branchId);
+  if (resolvedBranch) {
+    query = query.or(`branch_id.eq.${resolvedBranch},branch_id.is.null`);
   }
 
   const { data, error } = await query;
