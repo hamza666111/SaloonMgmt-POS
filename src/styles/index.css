@@ -1,0 +1,246 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+html {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+  background-color: var(--background);
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.light body {
+  background-color: #f5f5f5;
+  color: #0f172a;
+}
+
+.light .text-white {
+  color: #0f172a !important;
+}
+
+.light .text-\[\#9ca3af\] {
+  color: #64748b !important;
+}
+
+.light .text-\[\#6b7280\] {
+  color: #475569 !important;
+}
+
+.light .bg-\[\#111111\],
+.light .bg-\[\#161616\],
+.light .bg-\[\#1a1a1a\],
+.light .bg-\[\#1c1c1c\] {
+  background-color: #ffffff !important;
+}
+
+.light [style*="background: rgb(17, 17, 17)"] {
+  background-color: #f5f5f5 !important;
+}
+
+.light [style*="background: rgb(22, 22, 22)"],
+.light [style*="background: rgb(26, 26, 26)"] {
+  background-color: #ffffff !important;
+}
+
+.light [style*="color: rgb(255, 255, 255)"] {
+  color: #0f172a !important;
+}
+
+.bg-\[\#2563EB\] {
+  background-color: var(--primary) !important;
+}
+
+.text-\[\#2563EB\] {
+  color: var(--primary) !important;
+}
+
+.bg-\[\#1d4ed8\] {
+  background-color: var(--primary-strong) !important;
+}
+
+.text-\[\#1d4ed8\] {
+  color: var(--primary-strong) !important;
+}
+
+.border-\[\#2563EB\] {
+  border-color: var(--primary) !important;
+}
+
+.border-\[\#1d4ed8\] {
+  border-color: var(--primary-strong) !important;
+}
+
+.hover\:bg-\[\#2563EB\]:hover {
+  background-color: var(--primary) !important;
+}
+
+.hover\:bg-\[\#1d4ed8\]:hover {
+  background-color: var(--primary-strong) !important;
+}
+
+.hover\:text-\[\#2563EB\]:hover {
+  color: var(--primary) !important;
+}
+
+.hover\:text-\[\#1d4ed8\]:hover {
+  color: var(--primary-strong) !important;
+}
+
+[style*="#2563EB"] {
+  color: var(--primary) !important;
+  border-color: var(--primary) !important;
+}
+
+[style*="#1d4ed8"] {
+  color: var(--primary-strong) !important;
+  border-color: var(--primary-strong) !important;
+}
+
+[style*="background: #2563EB"],
+[style*="background-color: #2563EB"],
+[style*="background: rgb(37, 99, 235)"] {
+  background-color: var(--primary) !important;
+}
+
+[style*="background: #1d4ed8"],
+[style*="background-color: #1d4ed8"],
+[style*="background: rgb(29, 78, 216)"] {
+  background-color: var(--primary-strong) !important;
+}
+
+[style*="linear-gradient(135deg, #2563EB"],
+[style*="linear-gradient(135deg, #1d4ed8"] {
+  background-image: linear-gradient(135deg, var(--primary), var(--primary-strong)) !important;
+}
+
+.light .bg-\[\#2563EB\],
+.light .bg-\[\#1d4ed8\],
+.light [style*="background: rgb(37, 99, 235)"],
+.light [style*="background: rgb(29, 78, 216)"],
+.light [style*="linear-gradient(135deg, #2563EB"],
+.light [style*="linear-gradient(135deg, #1d4ed8"] {
+  color: #ffffff !important;
+}
+
+.staff-table [data-slot="table-head"] {
+  color: #ffffff !important;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
+
+/* Smooth transitions */
+* {
+  transition-property: background-color, border-color, color, opacity, transform, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Glass effect utility */
+.glass {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Glow effect for accent */
+.accent-glow {
+  box-shadow: 0 0 24px rgba(37, 99, 235, 0.3);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #ffffff 0%, #9ca3af 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.blue-gradient-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563EB 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Skeleton loading animation */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #222222 50%, #1a1a1a 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Subtle noise texture */
+.surface-noise {
+  position: relative;
+}
+
+/* Input focus ring */
+input:focus, textarea:focus, select:focus {
+  outline: none;
+}
+
+/* Remove input autofill background */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #ffffff;
+  -webkit-box-shadow: 0 0 0px 1000px #1a1a1a inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Floating label animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.3s ease forwards;
+}
+
+/* Background grid pattern for auth pages */
+.grid-pattern {
+  background-image: 
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Pulse animation for live indicators */
+@keyframes pulse-blue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-blue {
+  animation: pulse-blue 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
