@@ -3,7 +3,7 @@
  * Provides functions to fetch and manipulate data from Supabase
  */
 
-import { supabase, isSupabaseConfigured } from './supabase';
+import { supabase, isSupabaseConfigured, handleSupabaseError } from './supabase';
 import { mockClients, mockStaff, mockAppointments, mockServices, mockProducts, mockInvoices, mockPayroll, mockCampaigns } from '../data/mockData';
 
 // ==========================================
@@ -45,10 +45,10 @@ export async function getClients(branchId?: string) {
       spend: client.total_spent || 0,
       lastVisit: client.last_visit_at ? new Date(client.last_visit_at).toISOString().split('T')[0] : '',
       barber: client.preferred_barber?.full_name || 'Not assigned',
-      avatar: client.full_name.split(' ').map(n => n[0]).join('')
+      avatar: client.full_name.split(' ').map((n: string) => n[0]).join('')
     })) || [];
   } catch (error) {
-    console.error('Error fetching clients:', error);
+    handleSupabaseError(error as Error);
     return mockClients;
   }
 }
@@ -63,13 +63,29 @@ export async function createClient(clientData: {
     throw new Error('Supabase not configured');
   }
 
+  const payload = sanitizePayload({
+    full_name: clientData.full_name?.trim(),
+    phone: clientData.phone?.trim(),
+    email: clientData.email?.trim() || undefined,
+    branch_id: clientData.branch_id
+  });
+
+  if (!payload.full_name) throw new Error('Client name is required');
+  if (!payload.phone) throw new Error('Client phone is required');
+  if (!payload.branch_id) throw new Error('branch_id is required for client creation');
+  ensurePayloadNotEmpty(payload, 'Client');
+
   const { data, error } = await supabase
     .from('clients')
-    .insert(clientData)
+    .insert([payload])
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    handleSupabaseError(error);
+    throw error;
+  }
+
   return data;
 }
 
@@ -117,7 +133,7 @@ export async function getStaff(branchId?: string) {
       schedule: 'Mon-Sat'
     })) || [];
   } catch (error) {
-    console.error('Error fetching staff:', error);
+    handleSupabaseError(error as Error);
     return mockStaff;
   }
 }
@@ -170,7 +186,7 @@ export async function getAppointments(branchId?: string, date?: Date) {
       color: getBarberColor(appt.barber?.full_name || '')
     })) || [];
   } catch (error) {
-    console.error('Error fetching appointments:', error);
+    handleSupabaseError(error as Error);
     return mockAppointments;
   }
 }
@@ -188,13 +204,37 @@ export async function createAppointment(appointmentData: {
     throw new Error('Supabase not configured');
   }
 
+  const payload = sanitizePayload({
+    branch_id: appointmentData.branch_id,
+    client_id: appointmentData.client_id,
+    barber_id: appointmentData.barber_id,
+    service_id: appointmentData.service_id,
+    start_time: appointmentData.start_time,
+    end_time: appointmentData.end_time,
+    notes: appointmentData.notes,
+    status: 'confirmed'
+  });
+
+  const requiredFields = ['branch_id', 'client_id', 'barber_id', 'service_id', 'start_time', 'end_time'];
+  requiredFields.forEach(field => {
+    if (!payload[field as keyof typeof payload]) {
+      throw new Error(`Missing required appointment field: ${field}`);
+    }
+  });
+
+  ensurePayloadNotEmpty(payload, 'Appointment');
+
   const { data, error } = await supabase
     .from('appointments')
-    .insert(appointmentData)
+    .insert([payload])
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    handleSupabaseError(error);
+    throw error;
+  }
+
   return data;
 }
 
@@ -234,7 +274,7 @@ export async function getServices(branchId?: string) {
       category: service.category?.name || 'Other'
     })) || [];
   } catch (error) {
-    console.error('Error fetching services:', error);
+    handleSupabaseError(error as Error);
     return mockServices;
   }
 }
@@ -278,7 +318,7 @@ export async function getProducts(branchId?: string) {
       reorderLevel: product.low_stock_threshold
     })) || [];
   } catch (error) {
-    console.error('Error fetching products:', error);
+    handleSupabaseError(error as Error);
     return mockProducts;
   }
 }
@@ -332,7 +372,7 @@ export async function getSales(branchId?: string, limit?: number) {
       date: new Date(sale.created_at).toISOString().split('T')[0]
     })) || [];
   } catch (error) {
-    console.error('Error fetching sales:', error);
+    handleSupabaseError(error as Error);
     return mockInvoices;
   }
 }
@@ -361,38 +401,63 @@ export async function createSale(saleData: {
     throw new Error('Supabase not configured');
   }
 
-  // Insert sale
+  if (!saleData.branch_id) throw new Error('branch_id is required for sale creation');
+  if (!saleData.staff_id) throw new Error('staff_id is required for sale creation');
+  if (!saleData.invoice_number) throw new Error('invoice_number is required for sale creation');
+  if (saleData.subtotal === undefined || saleData.total === undefined) {
+    throw new Error('subtotal and total are required for sale creation');
+  }
+  if (!saleData.payment_method) throw new Error('payment_method is required for sale creation');
+  if (!saleData.items || saleData.items.length === 0) {
+    throw new Error('Sale items payload is empty');
+  }
+
+  const salePayload = sanitizePayload({
+    branch_id: saleData.branch_id,
+    invoice_number: saleData.invoice_number,
+    client_id: saleData.client_id || null,
+    staff_id: saleData.staff_id,
+    subtotal: Number(saleData.subtotal),
+    discount: Number(saleData.discount || 0),
+    tax: Number(saleData.tax || 0),
+    tip: Number(saleData.tip || 0),
+    total: Number(saleData.total),
+    payment_method: saleData.payment_method,
+    status: 'paid'
+  });
+
+  ensurePayloadNotEmpty(salePayload, 'Sale');
+
   const { data: sale, error: saleError } = await supabase
     .from('sales')
-    .insert({
-      branch_id: saleData.branch_id,
-      invoice_number: saleData.invoice_number,
-      client_id: saleData.client_id,
-      staff_id: saleData.staff_id,
-      subtotal: saleData.subtotal,
-      discount: saleData.discount,
-      tax: saleData.tax,
-      tip: saleData.tip,
-      total: saleData.total,
-      payment_method: saleData.payment_method,
-      status: 'paid'
-    })
+    .insert([salePayload])
     .select()
     .single();
 
-  if (saleError) throw saleError;
+  if (saleError) {
+    handleSupabaseError(saleError);
+    throw saleError;
+  }
 
-  // Insert sale items
-  const saleItems = saleData.items.map(item => ({
+  const saleItems = saleData.items.map(item => sanitizePayload({
     sale_id: sale.id,
-    ...item
+    item_type: item.item_type,
+    item_id: item.item_id,
+    item_name: item.item_name,
+    quantity: Number(item.quantity),
+    price: Number(item.price),
+    commission_percent: Number(item.commission_percent)
   }));
 
   const { error: itemsError } = await supabase
     .from('sale_items')
-    .insert(saleItems);
+    .insert(saleItems)
+    .select();
 
-  if (itemsError) throw itemsError;
+  if (itemsError) {
+    handleSupabaseError(itemsError);
+    throw itemsError;
+  }
 
   return sale;
 }
@@ -435,7 +500,7 @@ export async function getPayroll(branchId?: string) {
       status: record.status
     })) || [];
   } catch (error) {
-    console.error('Error fetching payroll:', error);
+    handleSupabaseError(error as Error);
     return mockPayroll;
   }
 }
@@ -477,7 +542,7 @@ export async function getCampaigns(branchId?: string) {
       date: new Date(campaign.created_at).toISOString().split('T')[0]
     })) || [];
   } catch (error) {
-    console.error('Error fetching campaigns:', error);
+    handleSupabaseError(error as Error);
     return mockCampaigns;
   }
 }
@@ -528,7 +593,7 @@ export async function getDashboardStats(branchId: string) {
       noShowRate: 4.2 // Would need calculation
     };
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
+    handleSupabaseError(error as Error);
     return {
       todayRevenue: 0,
       todayAppointments: 0,
@@ -551,6 +616,22 @@ function getBarberColor(barberName: string): string {
     'Chris Morgan': '#f59e0b',
   };
   return colors[barberName] || '#6b7280';
+}
+
+function sanitizePayload<T extends Record<string, any>>(payload: T): T {
+  const cleaned: Record<string, any> = {};
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      cleaned[key] = value;
+    }
+  });
+  return cleaned as T;
+}
+
+function ensurePayloadNotEmpty(payload: Record<string, any>, entity: string) {
+  if (!payload || Object.keys(payload).length === 0) {
+    throw new Error(`${entity} payload is empty`);
+  }
 }
 
 // Generate unique invoice number

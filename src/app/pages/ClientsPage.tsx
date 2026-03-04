@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { mockClients } from '../data/mockData';
 import { toast } from 'sonner';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, handleSupabaseError } from '../lib/supabase';
 import { useAuthStore } from '../store/useAuthStore';
 import { useBranchStore } from '../store/useBranchStore';
 
@@ -45,14 +45,33 @@ export function ClientsPage() {
 
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('clients').insert({
-        full_name: newClient.name,
-        phone: newClient.phone,
-        email: newClient.email,
-        branch_id: isAdmin ? newClient.branchId : user?.branchId,
-      });
+      const branchId = isAdmin ? (newClient.branchId || activeBranchId) : (user?.branchId || activeBranchId);
+      if (!branchId) throw new Error('Branch is required to create a client');
 
-      if (error) throw error;
+      const payload = {
+        full_name: newClient.name.trim(),
+        phone: newClient.phone.trim(),
+        email: newClient.email?.trim() || undefined,
+        branch_id: branchId
+      };
+
+      const cleanedPayload = Object.fromEntries(
+        Object.entries(payload).filter(([, value]) => value !== undefined)
+      );
+
+      if (!cleanedPayload || Object.keys(cleanedPayload).length === 0) {
+        throw new Error('Insert payload is empty');
+      }
+
+      const { error } = await supabase
+        .from('clients')
+        .insert([cleanedPayload])
+        .select();
+
+      if (error) {
+        handleSupabaseError(error);
+        throw error;
+      }
 
       toast.success('Client added successfully');
       setShowAddModal(false);
